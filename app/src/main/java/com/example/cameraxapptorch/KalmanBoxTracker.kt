@@ -11,12 +11,8 @@ import org.apache.commons.math3.filter.DefaultProcessModel
 import org.apache.commons.math3.filter.KalmanFilter
 
 class KalmanBoxTracker(
-    accelerationNoise: Double = 0.1,
-    measurementNoise: Double = 10.0,
     boundingBox: FloatArray?
 ) {
-    private val numStates = 7
-    private val numMeasurements = 4
 
     private val F: RealMatrix = Array2DRowRealMatrix(arrayOf(
         doubleArrayOf(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0),
@@ -121,7 +117,7 @@ class KalmanBoxTracker(
         this.kalmanFilter.correct(x_new)
     }
 
-    private fun predict(): FloatArray {
+    fun predict(): FloatArray {
         if ((kalmanFilter.stateEstimation[6] + kalmanFilter.stateEstimation[2]) >= 0) {
             kalmanFilter.stateEstimation[6] *= 0.0
         }
@@ -144,5 +140,4 @@ class KalmanBoxTracker(
     private fun getState() : FloatArray{
         return convertBBox(this.kalmanFilter.stateEstimation)
     }
-
 }

@@ -64,6 +64,18 @@ class MainActivity : AppCompatActivity() {
     private lateinit var outputType: DataType
     private var outputSize: Int = 0
 
+    //SORT
+    private var objectTrackers: MutableList<KalmanBoxTracker> = mutableListOf()
+    private val maxAge: Int=1
+    private val minHits: Int=3
+    private val iouThreshold: Float = 0.3f
+    private var frameCount:Int = 0
+//    self.max_age = max_age
+//    self.min_hits = min_hits
+//    self.iou_threshold = iou_threshold
+//    self.trackers = []
+//    self.frame_count = 0
+
 //    private var TrackedObjects = listOf<Tracked>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -433,12 +445,44 @@ class MainActivity : AppCompatActivity() {
 
         val postProcessedBoxes = nonMaxSuppression(boundingBoxes, 0.1f)
 
-//        Log.d("BOXES", Array.)
         for (box in postProcessedBoxes) {
             Log.d("BOX", Arrays.toString(box))
         }
 
         viewBinding.overlay.setRect(postProcessedBoxes)
+    }
+
+    private fun updateSort(detections: List<FloatArray> = mutableListOf()) {
+        this.frameCount++
+        var tracks = MutableList(this.objectTrackers.size) { FloatArray(5) }
+        var toDelete: MutableList<Int> = mutableListOf()
+        var returnedValue: MutableList<FloatArray> = mutableListOf()
+
+        for ((index, _) in tracks.withIndex()) {
+            var position = this.objectTrackers[index].predict()
+            tracks[index] = position
+            val isEmpty = position.isEmpty()
+            val hasNaN = position.any { it.isNaN() }
+            val sizeNotEqual5 = position.size != 5
+            if (isEmpty || hasNaN || sizeNotEqual5) {
+                toDelete.add(index)
+            }
+        }
+        toDelete.sortedDescending().forEach { index ->
+            // Check if the index is within the range of the list
+            if (index in 0 until tracks.size) {
+                // Remove the element at the specified index
+                tracks.removeAt(index)
+                this.objectTrackers.removeAt(index)
+            }
+        }
+
+
+
+    }
+
+    private fun associateDetectionsToTrackers(detections: MutableList<FloatArray>, trackers: MutableList<FloatArray>, iouThreshold: Float=0.3f) {
+
     }
 
 
@@ -460,6 +504,8 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
         cameraExecutor.shutdown()
     }
+
+
 
     companion object {
         private const val TAG = "CameraXApp"
