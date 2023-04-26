@@ -83,20 +83,20 @@ class KalmanBoxTracker(
 
     private var measurementModel: MeasurementModel
 
-    private var timeSinceUpdate = 0.0f
+    var timeSinceUpdate = 0.0f
 
     private var history = mutableListOf<FloatArray>()
 
     private var hits :Int = 0
 
-    private var hitStreak: Int = 0
+    var hitStreak: Int = 0
 
     private var age :Int = 0
 
     companion object {
         private var count = 0
     }
-    private var id: Int = 0
+    var id: Int = 0
 
     private var kalmanFilter: KalmanFilter
     init {
@@ -108,7 +108,7 @@ class KalmanBoxTracker(
     }
 
 
-    private fun update(boundingBox: FloatArray) {
+    fun update(boundingBox: FloatArray) {
         val x_new = getBoxFeatures(boundingBox)
         this.timeSinceUpdate = 0.0f
         this.history.clear()
@@ -137,7 +137,7 @@ class KalmanBoxTracker(
         return this.history.last()
     }
 
-    private fun getState() : FloatArray{
+    fun getState() : FloatArray{
         return convertBBox(this.kalmanFilter.stateEstimation)
     }
 }
