@@ -455,8 +455,12 @@ class MainActivity : AppCompatActivity() {
         val postProcessedBoxes = nonMaxSuppression(boundingBoxes, 0.1f)
 
         var finalBoundingBox = updateSort(postProcessedBoxes)
+//        Log.d("FINAL BOX", finalBoundingBox.toString())
 
-        for (box in postProcessedBoxes) {
+//        for (box in postProcessedBoxes) {
+//            Log.d("BOX BEFORE", Arrays.toString(box))
+//        }
+        for (box in finalBoundingBox) {
             Log.d("BOX", Arrays.toString(box))
         }
 
@@ -467,15 +471,17 @@ class MainActivity : AppCompatActivity() {
         this.frameCount++
         val tracks = MutableList(this.objectTrackers.size) { FloatArray(5) }
         val toDelete: MutableList<Int> = mutableListOf()
-        var returnedValue: MutableList<FloatArray> = mutableListOf()
+//        var returnedValue: MutableList<FloatArray> = mutableListOf()
+        Log.d("ASS" ,this.objectTrackers.size.toString())
 
         for ((index, _) in tracks.withIndex()) {
             val position = this.objectTrackers[index].predict()
+//            Log.d("Position", Arrays.toString(position))
             tracks[index] = position
             val isEmpty = position.isEmpty()
             val hasNaN = position.any { it.isNaN() }
-            val sizeNotEqual5 = position.size != 5
-            if (isEmpty || hasNaN || sizeNotEqual5) {
+//            val sizeNotEqual5 = position.size != 5
+            if (isEmpty || hasNaN) {
                 toDelete.add(index)
             }
         }
@@ -487,9 +493,12 @@ class MainActivity : AppCompatActivity() {
                 this.objectTrackers.removeAt(index)
             }
         }
+//        for (tracker in objectTrackers) {
+//            Log.d("MASUK", "MASUK")
+//            Log.d("Tracker", tracker.getState().toString())
+//        }
 
         val associations = associateDetectionsToTrackers(detections,tracks,0.5f)
-
         associations.first.forEach {
             this.objectTrackers[it[1]].update(detections[it[0]])
         }
@@ -561,20 +570,35 @@ class MainActivity : AppCompatActivity() {
 
     private fun associateDetectionsToTrackers(detections: List<FloatArray>, trackers: List<FloatArray>, iouThreshold: Float = 0.3f) :Triple<MutableList<IntArray>,MutableList<Int>, MutableList<Int>> {
         if (trackers.isEmpty()) {
-            return Triple(mutableListOf<IntArray>(), mutableListOf<Int>(),mutableListOf<Int>())
+            val unmatchedDetections = MutableList(detections.size) {it}
+            Log.d("unmatchedDetections", unmatchedDetections.toString())
+            return Triple(mutableListOf(), unmatchedDetections,mutableListOf())
         }
+//        for (tracker in trackers){
+//            Log.d("TRACKER", tracker.contentToString())
+//        }
 
         val iouMatrix = computeIoUMatrix(detections,trackers)
+//        Log.d()
+//        iouMatrix.contentToString()
+        for (iou in iouMatrix) {
+            Log.d("Iou", iou.contentToString())
+        }
+
+        val allEmpty = iouMatrix.all { it.isEmpty() }
 
         var matchedIndices = mutableListOf<IntArray>()
 //        iouMatrix.transpose()
-        if (iouMatrix.isNotEmpty()) {
+        Log.d("ALL EMPTY",allEmpty.toString())
+        if (iouMatrix.isNotEmpty() || !allEmpty) {
             val numRows = iouMatrix.size
             val numCols = iouMatrix[0].size
             val thresholdMatrix = Array(numRows) { IntArray(numCols) }
 
             for (i in 0 until numRows) {
                 for (j in 0 until numCols) {
+                    Log.d("IouTH", iouThreshold.toString())
+                    Log.d("IoU", "[${i},${j}] : ${iouMatrix[i][j]}")
                     if (iouMatrix[i][j] > iouThreshold) {
                         thresholdMatrix[i][j] = 1
                     } else {
@@ -582,13 +606,18 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
+//            Log.d("MAXROWANDCOLUMNSUM", thresholdMatrix.toString())
+            for (tM in thresholdMatrix) {
+                Log.d("T", tM.contentToString())
+            }
 
             val a = findMaxRowAndColSum(thresholdMatrix)
+            Log.d("MAXROWANDCOLUMNSUM", a.toString())
 
             if (a.first == 1 && a.second == 1) {
                 matchedIndices = findOnes(thresholdMatrix)
             } else {
-                matchedIndices = hungarianAlgorithm(iouMatrix)
+                matchedIndices = hungarianAlgorithm(iouMatrix.map { floatArray -> floatArray.map { it*-1.0f }.toFloatArray() }.toTypedArray())
             }
         }
 
@@ -606,8 +635,13 @@ class MainActivity : AppCompatActivity() {
         trackers.forEachIndexed { i, _ ->
             val notExist = matchedIndices.none { it[1] == i }
             if (notExist) {
-                unmatchedDetections.add(i)
+                unmatchedTrackers.add(i)
             }
+        }
+
+//        Log.d("MATCHES INDICES", matchedIndices)
+        for (match in matchedIndices) {
+            Log.d("MATCH", match.contentToString())
         }
 
         val matches = mutableListOf<IntArray>()
@@ -650,7 +684,7 @@ class MainActivity : AppCompatActivity() {
 
         // Step 4: Repeat until all zeros are covered
         while (starredZeros.size < minOf(numRows, numCols)) {
-            // Step 4a: Find a noncovered zero and star it
+            // Step 4a: Find a non-covered zero and star it
             var (i, j) = findUncoveredZero(costMatrix, starredZeros, primedZeros)
             while (i != -1 && j != -1) {
                 starredZeros.add(i to j)
@@ -679,7 +713,7 @@ class MainActivity : AppCompatActivity() {
                 uncoveredCols.map { j ->
                     costMatrix[i][j]
                 }
-            }.minOrNull() ?: throw IllegalArgumentException("No solution found")
+            }.minOrNull() ?: return mutableListOf()
 
             // Step 4e: Add the minimum value to all covered rows and subtract it from all covered columns
             starredZeros.forEach { (i, j) ->
@@ -752,6 +786,8 @@ class MainActivity : AppCompatActivity() {
     private fun computeIoUMatrix(detections: List<FloatArray>, trackers: List<FloatArray>): Array<FloatArray> {
         val numDetections = detections.size
         val numTrackers = trackers.size
+        Log.d("Number Trackers", numTrackers.toString())
+        Log.d("Number Detections", numDetections.toString())
 
         // Initialize the IoU matrix
         val iouMatrix = Array(numTrackers) { FloatArray(numDetections) }
@@ -776,9 +812,20 @@ class MainActivity : AppCompatActivity() {
 
                 // Compute the IoU and store it in the matrix
                 val iou = interArea / unionArea
+//                Log.d("InterArea", interArea.toString())
+//                Log.d("UnionArea", unionArea.toString())
+
+//                for (row in iouMatrix) {
+//                    Log.d("COST", row.toString())
+//                }
                 iouMatrix[i][j] = iou
             }
         }
+
+
+//        for (row in iouMatrix) {
+//            Log.d("ROW", Arrays.toString(row))
+//        }
 
         return iouMatrix
     }
