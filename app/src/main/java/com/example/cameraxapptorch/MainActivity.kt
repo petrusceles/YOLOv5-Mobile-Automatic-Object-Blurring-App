@@ -50,6 +50,12 @@ import kotlin.math.max
 import kotlin.math.min
 import org.apache.commons.math3.optim.linear.*
 import org.apache.commons.math3.linear.*
+import org.apache.commons.math3.optimization.linear.SimplexSolver
+import org.apache.commons.math3.optimization.linear.UnboundedSolutionException
+import com.chaquo.python.PyException
+import com.chaquo.python.PyObject
+import com.chaquo.python.Python
+import com.chaquo.python.android.AndroidPlatform
 
 
 class MainActivity : AppCompatActivity() {
@@ -75,10 +81,12 @@ class MainActivity : AppCompatActivity() {
 
     //SORT
     private var objectTrackers: MutableList<KalmanBoxTracker> = mutableListOf()
-    private val maxAge: Int=1
-    private val minHits: Int=3
+    private val maxAge: Int = 1
+    private val minHits: Int = 3
     private val iouThreshold: Float = 0.3f
-    private var frameCount:Int = 0
+    private var frameCount: Int = 0
+    val solver = SimplexSolver()
+    private lateinit var module: PyObject
 //    self.max_age = max_age
 //    self.min_hits = min_hits
 //    self.iou_threshold = iou_threshold
@@ -88,6 +96,7 @@ class MainActivity : AppCompatActivity() {
 //    private var TrackedObjects = listOf<Tracked>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
+
         super.onCreate(savedInstanceState)
         viewBinding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(viewBinding.root)
@@ -97,7 +106,8 @@ class MainActivity : AppCompatActivity() {
             startCamera()
         } else {
             ActivityCompat.requestPermissions(
-                this, REQUIRED_PERMISSIONS, REQUEST_CODE_PERMISSIONS)
+                this, REQUIRED_PERMISSIONS, REQUEST_CODE_PERMISSIONS
+            )
         }
 
         val tfliteModel = loadModelFile(this)
@@ -127,6 +137,14 @@ class MainActivity : AppCompatActivity() {
 
         cameraExecutor = Executors.newSingleThreadExecutor()
 
+        if (!Python.isStarted()) {
+            Python.start(AndroidPlatform(this))
+        }
+
+        val py = Python.getInstance()
+        this.module = py.getModule("lsa")
+
+
 
     }
 
@@ -140,16 +158,18 @@ class MainActivity : AppCompatActivity() {
         val contentValues = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
             put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-            if(Build.VERSION.SDK_INT > Build.VERSION_CODES.P) {
+            if (Build.VERSION.SDK_INT > Build.VERSION_CODES.P) {
                 put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/CameraX-Image")
             }
         }
 
         // Create output options object which contains file + metadata
         val outputOptions = ImageCapture.OutputFileOptions
-            .Builder(contentResolver,
+            .Builder(
+                contentResolver,
                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                contentValues)
+                contentValues
+            )
             .build()
 
         // Set up image capture listener, which is triggered after photo has
@@ -163,7 +183,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 override fun
-                        onImageSaved(output: ImageCapture.OutputFileResults){
+                        onImageSaved(output: ImageCapture.OutputFileResults) {
                     val msg = "Photo capture succeeded: ${output.savedUri}"
                     Toast.makeText(baseContext, msg, Toast.LENGTH_SHORT).show()
                     Log.d(TAG, msg)
@@ -204,15 +224,17 @@ class MainActivity : AppCompatActivity() {
         recording = videoCapture.output
             .prepareRecording(this, mediaStoreOutputOptions)
             .apply {
-                if (PermissionChecker.checkSelfPermission(this@MainActivity,
-                        Manifest.permission.RECORD_AUDIO) ==
-                    PermissionChecker.PERMISSION_GRANTED)
-                {
+                if (PermissionChecker.checkSelfPermission(
+                        this@MainActivity,
+                        Manifest.permission.RECORD_AUDIO
+                    ) ==
+                    PermissionChecker.PERMISSION_GRANTED
+                ) {
                     withAudioEnabled()
                 }
             }
             .start(ContextCompat.getMainExecutor(this)) { recordEvent ->
-                when(recordEvent) {
+                when (recordEvent) {
                     is VideoRecordEvent.Start -> {
                         viewBinding.videoCaptureButton.apply {
                             text = getString(R.string.stop_capture)
@@ -229,8 +251,10 @@ class MainActivity : AppCompatActivity() {
                         } else {
                             recording?.close()
                             recording = null
-                            Log.e(TAG, "Video capture ends with error: " +
-                                    "${recordEvent.error}")
+                            Log.e(
+                                TAG, "Video capture ends with error: " +
+                                        "${recordEvent.error}"
+                            )
                         }
                         viewBinding.videoCaptureButton.apply {
                             text = getString(R.string.start_capture)
@@ -247,7 +271,6 @@ class MainActivity : AppCompatActivity() {
         cameraProviderFuture.addListener({
             // Used to bind the lifecycle of cameras to the lifecycle owner
             val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
-
 
 
             // Preview
@@ -272,7 +295,8 @@ class MainActivity : AppCompatActivity() {
 
 //            imageAnalyzer.sett
 
-            imageAnalyzer.setAnalyzer(ContextCompat.getMainExecutor(this)
+            imageAnalyzer.setAnalyzer(
+                ContextCompat.getMainExecutor(this)
             ) { image: ImageProxy -> analyzer(image) }
 
             val selector = QualitySelector
@@ -309,9 +333,10 @@ class MainActivity : AppCompatActivity() {
 
                 // Bind use cases to camera
                 cameraProvider.bindToLifecycle(
-                    this, cameraSelector,preview, imageAnalyzer)
+                    this, cameraSelector, preview, imageAnalyzer
+                )
 
-            } catch(exc: Exception) {
+            } catch (exc: Exception) {
                 Log.e(TAG, "Use case binding failed", exc)
             }
 
@@ -319,7 +344,10 @@ class MainActivity : AppCompatActivity() {
     }
 
 
-    private fun nonMaxSuppression(boundingBoxes: MutableList<FloatArray>, overlapThresh: Float): MutableList<FloatArray> {
+    private fun nonMaxSuppression(
+        boundingBoxes: MutableList<FloatArray>,
+        overlapThresh: Float
+    ): MutableList<FloatArray> {
 
         val selectedBoxes = mutableListOf<FloatArray>()
 
@@ -363,7 +391,16 @@ class MainActivity : AppCompatActivity() {
         return interArea / (boxAArea + boxBArea - interArea)
     }
 
-    private fun analyzer (imageProxy: ImageProxy) {
+    fun convertStringToList(input: String): MutableList<IntArray> {
+        val pattern = Regex("""\((\d+(?:, \d+)*)\)""")
+        val matches = pattern.findAll(input).toList()
+        return matches.map { match ->
+            val tupleString = match.groupValues[1]
+            val tuple = tupleString.split(", ").map { it.toInt() }.toIntArray()
+            tuple
+        }.toMutableList()
+    }
+    private fun analyzer(imageProxy: ImageProxy) {
 
         viewBinding.overlay.clearRect()
 
@@ -373,7 +410,7 @@ class MainActivity : AppCompatActivity() {
 
         val inputBuffer = createInputBuffer(resizedBitmap)
 
-        executor.execute{
+        executor.execute {
             inferenceAndPostProcess(inputBuffer)
         }
 
@@ -381,10 +418,35 @@ class MainActivity : AppCompatActivity() {
         val inferenceTime = endTime - startTime
         Log.d("Analyze", "Inference time: $inferenceTime ms")
 
+//        val cost = arrayOf(
+//                doubleArrayOf(0.821095, 0.015650338, 0.0),
+//                doubleArrayOf(0.0, 0.0, 0.8666667),
+//                doubleArrayOf(0.0, 0.0, 0.0),
+//                doubleArrayOf(0.85831076, 0.04846801, 0.0),
+//                doubleArrayOf(0.0, 0.0, 0.8666667)
+//            )
+//
+//        try {
+//            val result = module.callAttr("lsa", cost).toString()
+//            val resultFinal = convertStringToList(result)
+//            for (res in resultFinal) {
+//                Log.d("SUCCESS", res.contentToString())
+//            }
+//        } catch (e: PyException) {
+//            Log.d("ERROR",e.toString())
+//        }
+
+//        val solution = try {
+//            solver.optimize()
+//        } catch (e: UnboundedSolutionException) {
+//            throw RuntimeException("The problem has an unbounded solution.", e)
+//        }
+
+
         imageProxy.close()
     }
 
-    private fun createInputBuffer(resizedBitmap: Bitmap) : ByteBuffer {
+    private fun createInputBuffer(resizedBitmap: Bitmap): ByteBuffer {
         val inputBuffer = ByteBuffer.allocateDirect(inputSize * inputType.byteSize()).apply {
             order(ByteOrder.nativeOrder())
             rewind()
@@ -400,6 +462,7 @@ class MainActivity : AppCompatActivity() {
         inputBuffer.rewind()
         return inputBuffer
     }
+
     private fun imageProxyToBitmap(imageProxy: ImageProxy): Bitmap {
         val yBuffer = imageProxy.planes[0].buffer // Y
         val uBuffer = imageProxy.planes[1].buffer // U
@@ -427,34 +490,41 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun inferenceAndPostProcess(inputBuffer: ByteBuffer) {
+        val startTime = SystemClock.uptimeMillis()
         val outputBuffer = Array(1) {
             Array(outputShape[1]) {
                 ByteArray(6)
             }
         }
-        interpreter.run(inputBuffer,outputBuffer)
+        interpreter.run(inputBuffer, outputBuffer)
         val boundingBoxes = mutableListOf<FloatArray>()
         for (i in 0 until outputShape[1]) {
             val classProb = (0.011072992347180843 * (outputBuffer[0][i][4] - 2))
             if (classProb >= 0.6) {
-                val xPos = (0.011072992347180843 * (outputBuffer[0][i][0]  - 2)) * viewBinding.viewFinder.width
-                val yPos = (0.011072992347180843 * (outputBuffer[0][i][1]  - 2)) * viewBinding.viewFinder.height
-                val width = (0.011072992347180843 * (outputBuffer[0][i][2]  - 2)) * viewBinding.viewFinder.width
-                val height = (0.011072992347180843 * (outputBuffer[0][i][3]  - 2)) * viewBinding.viewFinder.height
-                boundingBoxes.add(floatArrayOf(
-                    max(0f, (xPos - width / 2).toFloat()),
-                    max(0f, (yPos - height / 2).toFloat()),
-                    min(viewBinding.viewFinder.width.toFloat(), (xPos + width / 2).toFloat()),
-                    min(viewBinding.viewFinder.height.toFloat(), (yPos + height / 2).toFloat()),
-                    classProb.toFloat()
-                ))
+                val xPos =
+                    (0.011072992347180843 * (outputBuffer[0][i][0] - 2)) * viewBinding.viewFinder.width
+                val yPos =
+                    (0.011072992347180843 * (outputBuffer[0][i][1] - 2)) * viewBinding.viewFinder.height
+                val width =
+                    (0.011072992347180843 * (outputBuffer[0][i][2] - 2)) * viewBinding.viewFinder.width
+                val height =
+                    (0.011072992347180843 * (outputBuffer[0][i][3] - 2)) * viewBinding.viewFinder.height
+                boundingBoxes.add(
+                    floatArrayOf(
+                        max(0f, (xPos - width / 2).toFloat()),
+                        max(0f, (yPos - height / 2).toFloat()),
+                        min(viewBinding.viewFinder.width.toFloat(), (xPos + width / 2).toFloat()),
+                        min(viewBinding.viewFinder.height.toFloat(), (yPos + height / 2).toFloat()),
+                        classProb.toFloat()
+                    )
+                )
             }
         }
 
 
         val postProcessedBoxes = nonMaxSuppression(boundingBoxes, 0.1f)
 
-        var finalBoundingBox = updateSort(postProcessedBoxes)
+        val finalBoundingBox = updateSort(postProcessedBoxes)
 //        Log.d("FINAL BOX", finalBoundingBox.toString())
 
 //        for (box in postProcessedBoxes) {
@@ -464,7 +534,10 @@ class MainActivity : AppCompatActivity() {
             Log.d("BOX", Arrays.toString(box))
         }
 
-        viewBinding.overlay.setRect(postProcessedBoxes)
+        viewBinding.overlay.setRect(finalBoundingBox)
+        val endTime = SystemClock.uptimeMillis()
+        val inferenceTime = endTime - startTime
+        Log.d("Analyze", "Inference time Thread: $inferenceTime ms")
     }
 
     private fun updateSort(detections: List<FloatArray> = mutableListOf()): MutableList<FloatArray> {
@@ -472,7 +545,7 @@ class MainActivity : AppCompatActivity() {
         val tracks = MutableList(this.objectTrackers.size) { FloatArray(5) }
         val toDelete: MutableList<Int> = mutableListOf()
 //        var returnedValue: MutableList<FloatArray> = mutableListOf()
-        Log.d("ASS" ,this.objectTrackers.size.toString())
+//        Log.d("ASS" ,this.objectTrackers.size.toString())
 
         for ((index, _) in tracks.withIndex()) {
             val position = this.objectTrackers[index].predict()
@@ -498,9 +571,12 @@ class MainActivity : AppCompatActivity() {
 //            Log.d("Tracker", tracker.getState().toString())
 //        }
 
-        val associations = associateDetectionsToTrackers(detections,tracks,0.5f)
+        val associations = associateDetectionsToTrackers(detections, tracks, 0.3f)
+//        for (match in associations.first) {
+//            Log.d("MATCH", match.contentToString())
+//        }
         associations.first.forEach {
-            this.objectTrackers[it[1]].update(detections[it[0]])
+            this.objectTrackers[it[0]].update(detections[it[1]])
         }
 
         associations.second.forEach {
@@ -508,18 +584,22 @@ class MainActivity : AppCompatActivity() {
             this.objectTrackers.add(tracker)
         }
 
-        var returnedBBox = mutableListOf<FloatArray>()
+        val returnedBBox = mutableListOf<FloatArray>()
+        Log.d("TRACKER LENGTH", this.objectTrackers.size.toString())
         var i = this.objectTrackers.size
         for (tracker in this.objectTrackers.reversed()) {
-            var bbox = tracker.getState()
-            if (tracker.timeSinceUpdate < 1 && (tracker.hitStreak >= this.minHits || this.frameCount <= this.minHits)) {
-                returnedBBox.add(bbox.plus((tracker.id+1).toFloat()))
-            }
+            val bbox = tracker.getState()
+//            if (tracker.timeSinceUpdate < 1 && (tracker.hitStreak >= this.minHits || this.frameCount <= this.minHits)) {
+//                returnedBBox.add(bbox.plus((tracker.id + 1).toFloat()))
+//            }
+            returnedBBox.add(bbox.plus((tracker.id + 1).toFloat()))
             i -= 1
             if (tracker.timeSinceUpdate > this.maxAge) {
                 this.objectTrackers.removeAt(i)
             }
         }
+
+        Log.d("TRACKER LENGTH AFTER", this.objectTrackers.size.toString())
 
         return returnedBBox
     }
@@ -568,37 +648,46 @@ class MainActivity : AppCompatActivity() {
         return locations
     }
 
-    private fun associateDetectionsToTrackers(detections: List<FloatArray>, trackers: List<FloatArray>, iouThreshold: Float = 0.3f) :Triple<MutableList<IntArray>,MutableList<Int>, MutableList<Int>> {
+    private fun associateDetectionsToTrackers(
+        detections: List<FloatArray>,
+        trackers: List<FloatArray>,
+        iouThreshold: Float = 0.3f
+    ): Triple<MutableList<IntArray>, MutableList<Int>, MutableList<Int>> {
         if (trackers.isEmpty()) {
-            val unmatchedDetections = MutableList(detections.size) {it}
-            Log.d("unmatchedDetections", unmatchedDetections.toString())
-            return Triple(mutableListOf(), unmatchedDetections,mutableListOf())
+            val unmatchedDetections = MutableList(detections.size) { it }
+//            Log.d("unmatchedDetections", unmatchedDetections.toString())
+            return Triple(mutableListOf(), unmatchedDetections, mutableListOf())
         }
-//        for (tracker in trackers){
-//            Log.d("TRACKER", tracker.contentToString())
-//        }
+        for (tracker in trackers){
+            Log.d("TRACKER", tracker.contentToString())
+        }
+        for (detection in detections){
+            Log.d("DETECTIONS", detection.contentToString())
+        }
 
-        val iouMatrix = computeIoUMatrix(detections,trackers)
+        val iouMatrix = computeIoUMatrix(detections, trackers)
 //        Log.d()
 //        iouMatrix.contentToString()
         for (iou in iouMatrix) {
-            Log.d("Iou", iou.contentToString())
+            Log.d("IouMAT", iou.contentToString())
         }
 
-        val allEmpty = iouMatrix.all { it.isEmpty() }
+        val allEmpty = iouMatrix.any { it.isEmpty() }
 
         var matchedIndices = mutableListOf<IntArray>()
 //        iouMatrix.transpose()
-        Log.d("ALL EMPTY",allEmpty.toString())
-        if (iouMatrix.isNotEmpty() || !allEmpty) {
+//        Log.d("IoUMATRIX", iouMatrix.contentToString())
+//        Log.d("MATRIX EMPTY", iouMatrix.isNotEmpty().toString())
+//        Log.d("ALL EMPTY",allEmpty.toString())
+        if (iouMatrix.isNotEmpty() && !allEmpty) {
             val numRows = iouMatrix.size
             val numCols = iouMatrix[0].size
             val thresholdMatrix = Array(numRows) { IntArray(numCols) }
 
             for (i in 0 until numRows) {
                 for (j in 0 until numCols) {
-                    Log.d("IouTH", iouThreshold.toString())
-                    Log.d("IoU", "[${i},${j}] : ${iouMatrix[i][j]}")
+//                    Log.d("IouTH", iouThreshold.toString())
+//                    Log.d("IoU", "[${i},${j}] : ${iouMatrix[i][j]}")
                     if (iouMatrix[i][j] > iouThreshold) {
                         thresholdMatrix[i][j] = 1
                     } else {
@@ -606,25 +695,31 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
-//            Log.d("MAXROWANDCOLUMNSUM", thresholdMatrix.toString())
+//            Log.d("TH Matrix", thresholdMatrix.toString())
             for (tM in thresholdMatrix) {
                 Log.d("T", tM.contentToString())
             }
 
+
+
             val a = findMaxRowAndColSum(thresholdMatrix)
-            Log.d("MAXROWANDCOLUMNSUM", a.toString())
+//            Log.d("MAXROWANDCOLUMNSUM", a.toString())
 
             if (a.first == 1 && a.second == 1) {
+                Log.d("SINI1", "------1------")
                 matchedIndices = findOnes(thresholdMatrix)
             } else {
-                matchedIndices = hungarianAlgorithm(iouMatrix.map { floatArray -> floatArray.map { it*-1.0f }.toFloatArray() }.toTypedArray())
+                Log.d("SINI2", "------2------")
+//                matchedIndices = hungarianAlgorithm(iouMatrix)
+                val result = module.callAttr("lsa", iouMatrix).toString()
+                matchedIndices = convertStringToList(result)
             }
         }
 
         val unmatchedDetections = mutableListOf<Int>()
 
         detections.forEachIndexed { i, _ ->
-            val notExist = matchedIndices.none { it[0] == i }
+            val notExist = matchedIndices.none { it[1] == i }
             if (notExist) {
                 unmatchedDetections.add(i)
             }
@@ -633,7 +728,7 @@ class MainActivity : AppCompatActivity() {
         val unmatchedTrackers = mutableListOf<Int>()
 
         trackers.forEachIndexed { i, _ ->
-            val notExist = matchedIndices.none { it[1] == i }
+            val notExist = matchedIndices.none { it[0] == i }
             if (notExist) {
                 unmatchedTrackers.add(i)
             }
@@ -644,150 +739,383 @@ class MainActivity : AppCompatActivity() {
             Log.d("MATCH", match.contentToString())
         }
 
-        val matches = mutableListOf<IntArray>()
-        matchedIndices.forEach {
-            if (iouMatrix[it[0]][it[1]] < iouThreshold) {
-                unmatchedDetections.add(it[0])
-                unmatchedTrackers.add(it[1])
-            } else {
-                matches.add(intArrayOf(it[0],it[1]))
-            }
+
+        for (unmatchDet in unmatchedDetections) {
+            Log.d("UNMATCH DET", unmatchDet.toString())
+        }
+        for (unmatchTrack in unmatchedTrackers) {
+            Log.d("UNMATCH TRACKQ", unmatchTrack.toString())
         }
 
-        return Triple(matches,unmatchedDetections,unmatchedTrackers)
+        val matches = mutableListOf<IntArray>()
+
+        for (it in matchedIndices) {
+//            if (it[1] < 0 || it[0] < 0) continue
+            if (iouMatrix[it[0]][it[1]] < iouThreshold) {
+                unmatchedDetections.add(it[1])
+                unmatchedTrackers.add(it[0])
+            } else {
+                matches.add(intArrayOf(it[0], it[1]))
+            }
+        }
+//        matchedIndices.forEach {
+//            if (it[1] < 0 || it[0] < 0) continue
+//            if (iouMatrix[it[0]][it[1]] < iouThreshold) {
+//                unmatchedDetections.add(it[0])
+//                unmatchedTrackers.add(it[1])
+//            } else {
+//                matches.add(intArrayOf(it[0],it[1]))
+//            }
+//        }
+
+        return Triple(matches, unmatchedDetections, unmatchedTrackers)
 
     }
+//    private fun hungarianAlgorithmm(costMatrix: Array<FloatArray>): MutableList<IntArray> {
+//        val pyCosts = python.numpy.array(costMatrix)
+//    }
 
-    private fun hungarianAlgorithm(costMatrix: Array<FloatArray>): MutableList<IntArray> {
+//    private fun linearSumAssignment(costMatrix: Array<FloatArray>): MutableList<IntArray> {
+//        val m = costMatrix.size
+//        val n = costMatrix[0].size
+//
+//        // Step 1: Subtract the minimum value of each row from all the elements in that row
+//        for (i in 0 until m) {
+//            val minVal = costMatrix[i].minOrNull() ?: 0f
+//            for (j in 0 until n) {
+//                costMatrix[i][j] -= minVal
+//            }
+//        }
+//
+//        // Step 2: Subtract the minimum value of each column from all the elements in that column
+//        for (j in 0 until n) {
+//            val minVal = FloatArray(m) { i -> costMatrix[i][j] }.minOrNull() ?: 0f
+//            for (i in 0 until m) {
+//                costMatrix[i][j] -= minVal
+//            }
+//        }
+//
+//        // Step 3: Assign zeros to the maximum number of elements possible
+//        val assignment = MutableList(m) { -1 }
+//        val rowCovered = BooleanArray(m)
+//        val colCovered = BooleanArray(n)
+//        var numAssigned = 0
+//        while (numAssigned < m) {
+//            // Find an uncovered zero element
+//            var row = -1
+//            var col = -1
+//            for (i in 0 until m) {
+//                if (!rowCovered[i]) {
+//                    for (j in 0 until n) {
+//                        if (!colCovered[j] && costMatrix[i][j] == 0f) {
+//                            row = i
+//                            col = j
+//                            break
+//                        }
+//                    }
+//                    if (row >= 0) {
+//                        break
+//                    }
+//                }
+//            }
+//
+//            if (row >= 0) {
+//                assignment[row] = col
+//                rowCovered[row] = true
+//                colCovered[col] = true
+//                numAssigned++
+//            } else {
+//                // No uncovered zero element found, so find the minimum uncovered element
+//                var minVal = Float.MAX_VALUE
+//                for (i in 0 until m) {
+//                    if (!rowCovered[i]) {
+//                        for (j in 0 until n) {
+//                            if (!colCovered[j] && costMatrix[i][j] < minVal) {
+//                                minVal = costMatrix[i][j]
+//                            }
+//                        }
+//                    }
+//                }
+//
+//                // Subtract the minimum uncovered element from all the uncovered elements
+//                for (i in 0 until m) {
+//                    if (rowCovered[i]) {
+//                        for (j in 0 until n) {
+//                            costMatrix[i][j] += minVal
+//                        }
+//                    }
+//                }
+//                for (j in 0 until n) {
+//                    if (colCovered[j]) {
+//                        for (i in 0 until m) {
+//                            costMatrix[i][j] -= minVal
+//                        }
+//                    }
+//                }
+//            }
+//        }
+//
+//        // Convert the assignment list to a mutable list of int arrays
+//        val result = mutableListOf<IntArray>()
+//        for (i in 0 until m) {
+//            result.add(intArrayOf(i, assignment[i]))
+//        }
+//        return result
+//    }
+
+
+    fun linearSumAssignment(costMatrix: Array<FloatArray>): MutableList<IntArray> {
         val numRows = costMatrix.size
         val numCols = costMatrix[0].size
 
-        // Step 1: Subtract the minimum value in each row from all elements in that row
+        // Subtract each row by its minimum to ensure non-negative values
         for (i in 0 until numRows) {
-            val rowMin = costMatrix[i].minOrNull() ?: 0f
+            val rowMin = costMatrix[i].minOrNull() ?: 0f // Define rowMin here
             for (j in 0 until numCols) {
                 costMatrix[i][j] -= rowMin
             }
         }
 
-        // Step 2: Subtract the minimum value in each column from all elements in that column
+        // Subtract each column by its minimum to ensure non-negative values
         for (j in 0 until numCols) {
-            val colMin = (0 until numRows).map { costMatrix[it][j] }.minOrNull() ?: 0f
+            val colMin = FloatArray(numRows) { i -> costMatrix[i][j] }.minOrNull() ?: 0f
             for (i in 0 until numRows) {
                 costMatrix[i][j] -= colMin
             }
         }
 
-        // Step 3: Initialize the set of starred zeros and the set of primed zeros to be empty
-        val starredZeros = mutableSetOf<Pair<Int, Int>>()
-        val primedZeros = mutableSetOf<Pair<Int, Int>>()
+        // Run the Hungarian algorithm to find the minimum cost assignment
+        val assignment = MutableList(numRows) { -1 }
+        val rowCover = BooleanArray(numRows) { false }
+        val colCover = BooleanArray(numCols) { false }
+        var numAssigned = 0
 
-        // Step 4: Repeat until all zeros are covered
-        while (starredZeros.size < minOf(numRows, numCols)) {
-            // Step 4a: Find a non-covered zero and star it
-            var (i, j) = findUncoveredZero(costMatrix, starredZeros, primedZeros)
-            while (i != -1 && j != -1) {
-                starredZeros.add(i to j)
-
-                // Step 4b: Cover the row and column containing the starred zero
-                val row = starredZeros.filter { it.first == i }.map { it.second }
-                val col = starredZeros.filter { it.second == j }.map { it.first }
-                row.forEach { primedZeros.add(it to j) }
-                col.forEach { primedZeros.add(i to it) }
-
-                // Step 4c: Find another uncovered zero
-                i = findUncoveredRow(costMatrix, starredZeros)
-                if (i != -1) {
-                    j = findZeroInRow(costMatrix, i, starredZeros)
+        while (numAssigned < numRows) {
+            // Find an uncovered zero in the cost matrix
+            var zeroRow = -1
+            var zeroCol = -1
+            for (i in 0 until numRows) {
+                if (!rowCover[i]) {
+                    for (j in 0 until numCols) {
+                        if (!colCover[j] && costMatrix[i][j] == 0f) {
+                            zeroRow = i
+                            zeroCol = j
+                            break
+                        }
+                    }
+                }
+                if (zeroRow != -1) {
+                    break
                 }
             }
 
-            // Step 4d: Find the minimum uncovered value
-            val uncoveredRows = (0 until numRows).filter { i ->
-                !starredZeros.any { it.first == i }
-            }
-            val uncoveredCols = (0 until numCols).filter { j ->
-                !starredZeros.any { it.second == j }
-            }
-            val minValue = uncoveredRows.flatMap { i ->
-                uncoveredCols.map { j ->
-                    costMatrix[i][j]
+            if (zeroRow == -1) {
+                // No uncovered zero found, proceed to step 6
+                val minUncovered = findMinUncovered(costMatrix, rowCover, colCover)
+                addMinUncovered(costMatrix, rowCover, colCover, minUncovered)
+            } else {
+                // Cover the row and column containing the zero
+                rowCover[zeroRow] = true
+                colCover[zeroCol] = true
+                assignment[zeroRow] = zeroCol
+                numAssigned++
+
+                // Uncover any other zeros in the same row or column
+                for (i in 0 until numRows) {
+                    if (costMatrix[i][zeroCol] == 0f && !rowCover[i]) {
+                        rowCover[i] = true
+                        colCover[zeroCol] = false
+                        break
+                    }
                 }
-            }.minOrNull() ?: return mutableListOf()
-
-            // Step 4e: Add the minimum value to all covered rows and subtract it from all covered columns
-            starredZeros.forEach { (i, j) ->
-                costMatrix[i][j] += minValue
-            }
-            primedZeros.forEach { (i, j) ->
-                costMatrix[i][j] -= minValue
+                for (j in 0 until numCols) {
+                    if (costMatrix[zeroRow][j] == 0f && !colCover[j]) {
+                        colCover[j] = true
+                        rowCover[zeroRow] = false
+                        break
+                    }
+                }
             }
         }
 
-        // Step 5: Construct the assignment list from the set of starred zeros
-        val assignment = mutableListOf<IntArray>()
+        // Add back the row and column minimums to obtain the final assignment
         for (i in 0 until numRows) {
-            val j = starredZeros.find { it.first == i }?.second ?: -1
-            assignment.add(intArrayOf(i, j))
-        }
-
-        return assignment
-    }
-
-    private fun findUncoveredZero(costMatrix: Array<FloatArray>, starredZeros: Set<Pair<Int, Int>>, primedZeros: Set<Pair<Int, Int>>): Pair<Int, Int> {
-        val numRows = costMatrix.size
-        val numCols = costMatrix[0].size
-
-        for (i in 0 until numRows) {
+            val rowMin = costMatrix[i].minOrNull() ?: 0f // Define rowMin here
             for (j in 0 until numCols) {
-                val isStarred = starredZeros.any { it.first == i && it.second == j }
-                val isPrimed = primedZeros.any { it.first == i && it.second == j }
-                if (costMatrix[i][j] == 0f && !isStarred && !isPrimed) {
-                    return i to j
-                }
+                costMatrix[i][j] += rowMin
             }
         }
 
-        return -1 to -1
+        // Return the assignment as a list of index pairs
+        return assignment.map { intArrayOf(it, assignment.indexOf(it)) }.toMutableList()
     }
 
-    private fun findUncoveredRow(costMatrix: Array<FloatArray>, starredZeros: Set<Pair<Int, Int>>): Int {
-        val numRows = costMatrix.size
-        val numCols = costMatrix[0].size
-
-        for (i in 0 until numRows) {
-            if (!starredZeros.any { it.first == i }) {
-                val rowZeros = (0 until numCols).filter { j ->
-                    costMatrix[i][j] == 0f
-                }
-                if (rowZeros.isNotEmpty()) {
-                    return i
+    fun findMinUncovered(
+        costMatrix: Array<FloatArray>,
+        rowCover: BooleanArray,
+        colCover: BooleanArray
+    ): Float {
+        var minVal = Float.POSITIVE_INFINITY
+        for (i in costMatrix.indices) {
+            if (!rowCover[i]) {
+                for (j in costMatrix[i].indices) {
+                    if (!colCover[j] && costMatrix[i][j] < minVal) {
+                        minVal = costMatrix[i][j]
+                    }
                 }
             }
         }
-
-        return -1
+        return minVal
     }
-
-    private fun findZeroInRow(costMatrix: Array<FloatArray>, row: Int, starredZeros: Set<Pair<Int, Int>>): Int {
-        val numCols = costMatrix[0].size
-
-        for (j in 0 until numCols) {
-            if (costMatrix[row][j] == 0f && !starredZeros.any { it.second == j }) {
-                return j
+    fun addMinUncovered(
+        costMatrix: Array<FloatArray>,
+        rowCover: BooleanArray,
+        colCover: BooleanArray,
+        minVal: Float
+    ) {
+        for (i in costMatrix.indices) {
+            for (j in costMatrix[i].indices) {
+                if (rowCover[i]) {
+                    costMatrix[i][j] += minVal
+                }
+                if (!colCover[j]) {
+                    costMatrix[i][j] -= minVal
+                }
             }
         }
-
-        return -1
     }
+
+//    private fun hungarianAlgorithm(costMatrix: Array<FloatArray>): MutableList<IntArray> {
+//        val numRows = costMatrix.size
+//        val numCols = costMatrix[0].size
+//
+//        // Step 1: Subtract the minimum value in each row from all elements in that row
+//        for (i in 0 until numRows) {
+//            val rowMin = costMatrix[i].minOrNull() ?: 0f
+//            for (j in 0 until numCols) {
+//                costMatrix[i][j] -= rowMin
+//            }
+//        }
+//
+//        // Step 2: Subtract the minimum value in each column from all elements in that column
+//        for (j in 0 until numCols) {
+//            val colMin = (0 until numRows).map { costMatrix[it][j] }.minOrNull() ?: 0f
+//            for (i in 0 until numRows) {
+//                costMatrix[i][j] -= colMin
+//            }
+//        }
+//
+//        // Step 3: Initialize the set of starred zeros and the set of primed zeros to be empty
+//        val starredZeros = mutableSetOf<Pair<Int, Int>>()
+//        val primedZeros = mutableSetOf<Pair<Int, Int>>()
+//
+//        // Step 4: Repeat until all zeros are covered
+//        while (starredZeros.size < minOf(numRows, numCols)) {
+//            // Step 4a: Find a non-covered zero and star it
+//            var (i, j) = findUncoveredZero(costMatrix, starredZeros, primedZeros)
+//            while (i != -1 && j != -1) {
+//                starredZeros.add(i to j)
+//
+//                // Step 4b: Cover the row and column containing the starred zero
+//                val row = starredZeros.filter { it.first == i }.map { it.second }
+//                val col = starredZeros.filter { it.second == j }.map { it.first }
+//                row.forEach { primedZeros.add(it to j) }
+//                col.forEach { primedZeros.add(i to it) }
+//
+//                // Step 4c: Find another uncovered zero
+//                i = findUncoveredRow(costMatrix, starredZeros)
+//                if (i != -1) {
+//                    j = findZeroInRow(costMatrix, i, starredZeros)
+//                }
+//            }
+//
+//            // Step 4d: Find the minimum uncovered value
+//            val uncoveredRows = (0 until numRows).filter { i ->
+//                !starredZeros.any { it.first == i }
+//            }
+//            val uncoveredCols = (0 until numCols).filter { j ->
+//                !starredZeros.any { it.second == j }
+//            }
+//            val minValue = uncoveredRows.flatMap { i ->
+//                uncoveredCols.map { j ->
+//                    costMatrix[i][j]
+//                }
+//            }.minOrNull() ?: return mutableListOf()
+//
+//            // Step 4e: Add the minimum value to all covered rows and subtract it from all covered columns
+//            starredZeros.forEach { (i, j) ->
+//                costMatrix[i][j] += minValue
+//            }
+//            primedZeros.forEach { (i, j) ->
+//                costMatrix[i][j] -= minValue
+//            }
+//        }
+//
+//        // Step 5: Construct the assignment list from the set of starred zeros
+//        val assignment = mutableListOf<IntArray>()
+//        for (i in 0 until numRows) {
+//            val j = starredZeros.find { it.first == i }?.second ?: -1
+//            assignment.add(intArrayOf(i, j))
+//        }
+//
+//        return assignment
+//    }
+//
+//    private fun findUncoveredZero(costMatrix: Array<FloatArray>, starredZeros: Set<Pair<Int, Int>>, primedZeros: Set<Pair<Int, Int>>): Pair<Int, Int> {
+//        val numRows = costMatrix.size
+//        val numCols = costMatrix[0].size
+//
+//        for (i in 0 until numRows) {
+//            for (j in 0 until numCols) {
+//                val isStarred = starredZeros.any { it.first == i && it.second == j }
+//                val isPrimed = primedZeros.any { it.first == i && it.second == j }
+//                if (costMatrix[i][j] == 0f && !isStarred && !isPrimed) {
+//                    return i to j
+//                }
+//            }
+//        }
+//
+//        return -1 to -1
+//    }
+//
+//    private fun findUncoveredRow(costMatrix: Array<FloatArray>, starredZeros: Set<Pair<Int, Int>>): Int {
+//        val numRows = costMatrix.size
+//        val numCols = costMatrix[0].size
+//
+//        for (i in 0 until numRows) {
+//            if (!starredZeros.any { it.first == i }) {
+//                val rowZeros = (0 until numCols).filter { j ->
+//                    costMatrix[i][j] == 0f
+//                }
+//                if (rowZeros.isNotEmpty()) {
+//                    return i
+//                }
+//            }
+//        }
+//
+//        return -1
+//    }
+//
+//    private fun findZeroInRow(costMatrix: Array<FloatArray>, row: Int, starredZeros: Set<Pair<Int, Int>>): Int {
+//        val numCols = costMatrix[0].size
+//
+//        for (j in 0 until numCols) {
+//            if (costMatrix[row][j] == 0f && !starredZeros.any { it.second == j }) {
+//                return j
+//            }
+//        }
+//
+//        return -1
+//    }
+//
 
 
 
     private fun computeIoUMatrix(detections: List<FloatArray>, trackers: List<FloatArray>): Array<FloatArray> {
         val numDetections = detections.size
         val numTrackers = trackers.size
-        Log.d("Number Trackers", numTrackers.toString())
-        Log.d("Number Detections", numDetections.toString())
+//        Log.d("Number Trackers", numTrackers.toString())
+//        Log.d("Number Detections", numDetections.toString())
 
         // Initialize the IoU matrix
         val iouMatrix = Array(numTrackers) { FloatArray(numDetections) }
