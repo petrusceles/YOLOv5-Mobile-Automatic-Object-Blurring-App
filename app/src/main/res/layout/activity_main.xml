@@ -11,6 +11,11 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
+    <ImageView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:id="@+id/viewImage"/>
+
     <com.example.cameraxapptorch.GraphOverlay
         android:id="@+id/overlay"
         android:layout_width="match_parent"

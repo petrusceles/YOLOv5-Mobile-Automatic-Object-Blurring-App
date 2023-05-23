@@ -12,6 +12,9 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.Log
+import android.view.View
+import android.view.Window
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.camera2.interop.Camera2CameraInfo
@@ -25,6 +28,13 @@ import androidx.camera.video.VideoCapture
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.PermissionChecker
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.renderscript.Allocation
+import androidx.renderscript.Element
+import androidx.renderscript.RenderScript
+import androidx.renderscript.ScriptIntrinsicBlur
 import com.example.cameraxapptorch.databinding.ActivityMainBinding
 import org.apache.commons.math3.linear.Array2DRowRealMatrix
 import org.apache.commons.math3.linear.ArrayRealVector
@@ -85,8 +95,9 @@ class MainActivity : AppCompatActivity() {
     private val minHits: Int = 3
     private val iouThreshold: Float = 0.3f
     private var frameCount: Int = 0
-    val solver = SimplexSolver()
     private lateinit var module: PyObject
+
+    private var finalBoundingBoxes: MutableList<FloatArray> = mutableListOf()
 //    self.max_age = max_age
 //    self.min_hits = min_hits
 //    self.iou_threshold = iou_threshold
@@ -109,7 +120,12 @@ class MainActivity : AppCompatActivity() {
                 this, REQUIRED_PERMISSIONS, REQUEST_CODE_PERMISSIONS
             )
         }
-
+        val windowInsetsController =
+            WindowCompat.getInsetsController(window, window.decorView)
+        // Configure the behavior of the hidden system bars.
+        windowInsetsController.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        windowInsetsController.hide(WindowInsetsCompat.Type.systemBars())
         val tfliteModel = loadModelFile(this)
         val options = Interpreter.Options()
         options.useNNAPI = true
@@ -133,7 +149,6 @@ class MainActivity : AppCompatActivity() {
 
         // Set up the listeners for take photo and video capture buttons
 //        viewBinding.imageCaptureButton.setOnClickListener { takePhoto() }
-        viewBinding.videoCaptureButton.setOnClickListener { captureVideo() }
 
         cameraExecutor = Executors.newSingleThreadExecutor()
 
@@ -148,123 +163,6 @@ class MainActivity : AppCompatActivity() {
 
     }
 
-    private fun takePhoto() {
-        // Get a stable reference of the modifiable image capture use case
-        val imageCapture = imageCapture ?: return
-
-        // Create time stamped name and MediaStore entry.
-        val name = SimpleDateFormat(FILENAME_FORMAT, Locale.US)
-            .format(System.currentTimeMillis())
-        val contentValues = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-            if (Build.VERSION.SDK_INT > Build.VERSION_CODES.P) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/CameraX-Image")
-            }
-        }
-
-        // Create output options object which contains file + metadata
-        val outputOptions = ImageCapture.OutputFileOptions
-            .Builder(
-                contentResolver,
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                contentValues
-            )
-            .build()
-
-        // Set up image capture listener, which is triggered after photo has
-        // been taken
-        imageCapture.takePicture(
-            outputOptions,
-            ContextCompat.getMainExecutor(this),
-            object : ImageCapture.OnImageSavedCallback {
-                override fun onError(exc: ImageCaptureException) {
-                    Log.e(TAG, "Photo capture failed: ${exc.message}", exc)
-                }
-
-                override fun
-                        onImageSaved(output: ImageCapture.OutputFileResults) {
-                    val msg = "Photo capture succeeded: ${output.savedUri}"
-                    Toast.makeText(baseContext, msg, Toast.LENGTH_SHORT).show()
-                    Log.d(TAG, msg)
-                }
-            }
-        )
-    }
-
-    // Implements VideoCapture use case, including start and stop capturing.
-    private fun captureVideo() {
-        val videoCapture = this.videoCapture ?: return
-
-        viewBinding.videoCaptureButton.isEnabled = false
-
-        val curRecording = recording
-        if (curRecording != null) {
-            // Stop the current recording session.
-            curRecording.stop()
-            recording = null
-            return
-        }
-
-        // create and start a new recording session
-        val name = SimpleDateFormat(FILENAME_FORMAT, Locale.US)
-            .format(System.currentTimeMillis())
-        val contentValues = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-            put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
-            if (Build.VERSION.SDK_INT > Build.VERSION_CODES.P) {
-                put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/CameraX-Video")
-            }
-        }
-
-        val mediaStoreOutputOptions = MediaStoreOutputOptions
-            .Builder(contentResolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
-            .setContentValues(contentValues)
-            .build()
-        recording = videoCapture.output
-            .prepareRecording(this, mediaStoreOutputOptions)
-            .apply {
-                if (PermissionChecker.checkSelfPermission(
-                        this@MainActivity,
-                        Manifest.permission.RECORD_AUDIO
-                    ) ==
-                    PermissionChecker.PERMISSION_GRANTED
-                ) {
-                    withAudioEnabled()
-                }
-            }
-            .start(ContextCompat.getMainExecutor(this)) { recordEvent ->
-                when (recordEvent) {
-                    is VideoRecordEvent.Start -> {
-                        viewBinding.videoCaptureButton.apply {
-                            text = getString(R.string.stop_capture)
-                            isEnabled = true
-                        }
-                    }
-                    is VideoRecordEvent.Finalize -> {
-                        if (!recordEvent.hasError()) {
-                            val msg = "Video capture succeeded: " +
-                                    "${recordEvent.outputResults.outputUri}"
-                            Toast.makeText(baseContext, msg, Toast.LENGTH_SHORT)
-                                .show()
-                            Log.d(TAG, msg)
-                        } else {
-                            recording?.close()
-                            recording = null
-                            Log.e(
-                                TAG, "Video capture ends with error: " +
-                                        "${recordEvent.error}"
-                            )
-                        }
-                        viewBinding.videoCaptureButton.apply {
-                            text = getString(R.string.start_capture)
-                            isEnabled = true
-                        }
-                    }
-                }
-            }
-    }
-
     private fun startCamera() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
 
@@ -274,12 +172,12 @@ class MainActivity : AppCompatActivity() {
 
 
             // Preview
-            val preview = Preview.Builder()
-                .setTargetAspectRatio(AspectRatio.RATIO_16_9)
-                .build()
-                .also {
-                    it.setSurfaceProvider(viewBinding.viewFinder.surfaceProvider)
-                }
+//            val preview = Preview.Builder()
+//                .setTargetAspectRatio(AspectRatio.RATIO_16_9)
+//                .build()
+//                .also {
+//                    it.setSurfaceProvider(viewBinding.viewFinder.surfaceProvider)
+//                }
 
 //            val camera2Interop = Camera2Interop.Extender
 //            camera2Interop.setTargetFps(30)
@@ -289,7 +187,6 @@ class MainActivity : AppCompatActivity() {
 
             val imageAnalyzer = ImageAnalysis.Builder()
                 .setTargetAspectRatio(AspectRatio.RATIO_16_9)
-//                .setTargetRotation(ROTATION_90)
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .build()
 
@@ -299,19 +196,8 @@ class MainActivity : AppCompatActivity() {
                 ContextCompat.getMainExecutor(this)
             ) { image: ImageProxy -> analyzer(image) }
 
-            val selector = QualitySelector
-                .from(
-                    Quality.UHD,
-                    FallbackStrategy.higherQualityOrLowerThan(Quality.SD)
-                )
-
-            val recorder = Recorder.Builder()
-                .setQualitySelector(selector)
-                .build()
 
 
-
-            videoCapture = VideoCapture.withOutput(recorder)
 
             // Select back camera as a default
             @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
@@ -333,7 +219,7 @@ class MainActivity : AppCompatActivity() {
 
                 // Bind use cases to camera
                 cameraProvider.bindToLifecycle(
-                    this, cameraSelector, preview, imageAnalyzer
+                    this, cameraSelector,  imageAnalyzer
                 )
 
             } catch (exc: Exception) {
@@ -402,48 +288,78 @@ class MainActivity : AppCompatActivity() {
     }
     private fun analyzer(imageProxy: ImageProxy) {
 
-        viewBinding.overlay.clearRect()
 
         val startTime = SystemClock.uptimeMillis()
 
-        val resizedBitmap = imageProxyToBitmap(imageProxy)
+        val rotation = imageProxy.imageInfo.rotationDegrees
+        val resizedBitmap = imageProxyToBitmap(imageProxy,rotation)
+        val scaledBitmap = Bitmap.createScaledBitmap(
+            resizedBitmap, inputShape[2], inputShape[2], false
+        )
+        val inputBuffer = createInputBuffer(scaledBitmap)
+        val timeSpent = (SystemClock.uptimeMillis() - startTime).toInt()
+        Log.d("TIME SPENT", "$timeSpent ms")
 
-        val inputBuffer = createInputBuffer(resizedBitmap)
+        Log.d("BITMAP INFO", "Width : ${resizedBitmap.width} Height : ${resizedBitmap.height}")
+        Log.d("SCREEN INFO", "Width : ${viewBinding.viewImage.width} Height : ${viewBinding.viewImage.height}")
+
 
         executor.execute {
-            inferenceAndPostProcess(inputBuffer)
+            inferenceAndPostProcess(inputBuffer, resizedBitmap.width, resizedBitmap.height)
         }
 
-        val endTime = SystemClock.uptimeMillis()
-        val inferenceTime = endTime - startTime
-        Log.d("Analyze", "Inference time: $inferenceTime ms")
-
-//        val cost = arrayOf(
-//                doubleArrayOf(0.821095, 0.015650338, 0.0),
-//                doubleArrayOf(0.0, 0.0, 0.8666667),
-//                doubleArrayOf(0.0, 0.0, 0.0),
-//                doubleArrayOf(0.85831076, 0.04846801, 0.0),
-//                doubleArrayOf(0.0, 0.0, 0.8666667)
-//            )
-//
-//        try {
-//            val result = module.callAttr("lsa", cost).toString()
-//            val resultFinal = convertStringToList(result)
-//            for (res in resultFinal) {
-//                Log.d("SUCCESS", res.contentToString())
-//            }
-//        } catch (e: PyException) {
-//            Log.d("ERROR",e.toString())
-//        }
-
-//        val solution = try {
-//            solver.optimize()
-//        } catch (e: UnboundedSolutionException) {
-//            throw RuntimeException("The problem has an unbounded solution.", e)
-//        }
+        drawRectangleAndShow(resizedBitmap)
 
 
         imageProxy.close()
+    }
+
+    private fun drawRectangleAndShow(bitmap: Bitmap) {
+        val mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true)
+
+        val canvas = Canvas(mutableBitmap)
+
+// Create a Paint object for applying blur effect
+        val blurPaint = Paint().apply {
+            maskFilter = BlurMaskFilter(10f, BlurMaskFilter.Blur.NORMAL)
+        }
+
+// Loop through each bounding box
+        for (box in finalBoundingBoxes) {
+            val left = box[0].toInt()
+            val top = box[1].toInt()
+            val right = box[2].toInt()
+            val bottom = box[3].toInt()
+
+            // Create a destination rectangle for the blurred region
+            val rect = Rect(left, top, right, bottom)
+
+            // Create a bitmap for the blurred region
+            val blurredRegion =
+                Bitmap.createBitmap(rect.width(), rect.height(), Bitmap.Config.ARGB_8888)
+
+            // Create a Canvas object for the blurred region bitmap
+            val blurredCanvas = Canvas(blurredRegion)
+
+            // Draw the portion of the original bitmap within the rectangle on the blurred canvas
+            blurredCanvas.drawBitmap(bitmap, -left.toFloat(), -top.toFloat(), null)
+
+            // Apply the blur effect to the blurred region
+            val rs = RenderScript.create(this)
+            val blurInput = Allocation.createFromBitmap(rs, blurredRegion)
+            val blurOutput = Allocation.createTyped(rs, blurInput.type)
+            val blurScript = ScriptIntrinsicBlur.create(rs, Element.U8_4(rs))
+            blurScript.setRadius(20f)
+            blurScript.setInput(blurInput)
+            blurScript.forEach(blurOutput)
+            blurOutput.copyTo(blurredRegion)
+            rs.destroy()
+
+            // Draw the blurred region onto the canvas
+            canvas.drawBitmap(blurredRegion, left.toFloat(), top.toFloat(), blurPaint)
+        }
+
+            viewBinding.viewImage.setImageBitmap(mutableBitmap)
     }
 
     private fun createInputBuffer(resizedBitmap: Bitmap): ByteBuffer {
@@ -451,45 +367,58 @@ class MainActivity : AppCompatActivity() {
             order(ByteOrder.nativeOrder())
             rewind()
         }
-        for (y in 0 until inputShape[1]) {
-            for (x in 0 until inputShape[2]) {
-                val pixel = resizedBitmap.getPixel(x, y)
-                inputBuffer.put((pixel shr 16 and 0xFF).toByte())
-                inputBuffer.put((pixel shr 8 and 0xFF).toByte())
-                inputBuffer.put((pixel and 0xFF).toByte())
-            }
+
+        val pixels = IntArray(inputShape[1] * inputShape[2])
+        resizedBitmap.getPixels(pixels, 0, inputShape[2], 0, 0, inputShape[2], inputShape[1])
+
+        for (pixel in pixels) {
+            inputBuffer.put((pixel and 0xFF).toByte())
+            inputBuffer.put((pixel shr 8 and 0xFF).toByte())
+            inputBuffer.put((pixel shr 16 and 0xFF).toByte())
         }
+
         inputBuffer.rewind()
         return inputBuffer
     }
 
-    private fun imageProxyToBitmap(imageProxy: ImageProxy): Bitmap {
+    private fun imageProxyToBitmap(imageProxy: ImageProxy, rotation: Int): Bitmap {
         val yBuffer = imageProxy.planes[0].buffer // Y
         val uBuffer = imageProxy.planes[1].buffer // U
         val vBuffer = imageProxy.planes[2].buffer // V
+
         val ySize = yBuffer.remaining()
         val uSize = uBuffer.remaining()
         val vSize = vBuffer.remaining()
+
         val nv21 = ByteArray(ySize + uSize + vSize)
+
         yBuffer.get(nv21, 0, ySize)
         vBuffer.get(nv21, ySize, vSize)
         uBuffer.get(nv21, ySize + vSize, uSize)
-        val out = ByteArrayOutputStream()
-        YuvImage(nv21, ImageFormat.NV21, imageProxy.width, imageProxy.height, null).compressToJpeg(
-            Rect(0, 0, imageProxy.width, imageProxy.height),
-            100,
-            out
-        )
-        val bitmap = BitmapFactory.decodeByteArray(out.toByteArray(), 0, out.size())
 
-        val matrix = Matrix()
-        matrix.postRotate(90f)
-        val rotatedBitmap =
-            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-        return Bitmap.createScaledBitmap(rotatedBitmap, inputShape[2], inputShape[2], false)
+        val out = ByteArrayOutputStream(ySize + uSize + vSize)
+        out.use {
+            YuvImage(nv21, ImageFormat.NV21, imageProxy.width, imageProxy.height, null).compressToJpeg(
+                Rect(0, 0, imageProxy.width, imageProxy.height),
+                100,
+                it
+            )
+            val jpegData = it.toByteArray()
+            val bitmap = BitmapFactory.decodeByteArray(jpegData, 0, jpegData.size)
+
+            if (rotation != 0) {
+                val matrix = Matrix()
+                matrix.postRotate(rotation.toFloat())
+                return Bitmap.createBitmap(
+                    bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true
+                )
+            }
+
+            return bitmap
+        }
     }
 
-    private fun inferenceAndPostProcess(inputBuffer: ByteBuffer) {
+    private fun inferenceAndPostProcess(inputBuffer: ByteBuffer, width: Int, height: Int) {
         val startTime = SystemClock.uptimeMillis()
         val outputBuffer = Array(1) {
             Array(outputShape[1]) {
@@ -502,19 +431,19 @@ class MainActivity : AppCompatActivity() {
             val classProb = (0.011072992347180843 * (outputBuffer[0][i][4] - 2))
             if (classProb >= 0.6) {
                 val xPos =
-                    (0.011072992347180843 * (outputBuffer[0][i][0] - 2)) * viewBinding.viewFinder.width
+                    (0.011072992347180843 * (outputBuffer[0][i][0] - 2)) * width
                 val yPos =
-                    (0.011072992347180843 * (outputBuffer[0][i][1] - 2)) * viewBinding.viewFinder.height
-                val width =
-                    (0.011072992347180843 * (outputBuffer[0][i][2] - 2)) * viewBinding.viewFinder.width
-                val height =
-                    (0.011072992347180843 * (outputBuffer[0][i][3] - 2)) * viewBinding.viewFinder.height
+                    (0.011072992347180843 * (outputBuffer[0][i][1] - 2)) * height
+                val widthBox =
+                    (0.011072992347180843 * (outputBuffer[0][i][2] - 2)) * width
+                val heightBox =
+                    (0.011072992347180843 * (outputBuffer[0][i][3] - 2)) * height
                 boundingBoxes.add(
                     floatArrayOf(
-                        max(0f, (xPos - width / 2).toFloat()),
-                        max(0f, (yPos - height / 2).toFloat()),
-                        min(viewBinding.viewFinder.width.toFloat(), (xPos + width / 2).toFloat()),
-                        min(viewBinding.viewFinder.height.toFloat(), (yPos + height / 2).toFloat()),
+                        max(0f, (xPos - widthBox / 2).toFloat()),
+                        max(0f, (yPos - heightBox / 2).toFloat()),
+                        min(width.toFloat(), (xPos + widthBox / 2).toFloat()),
+                        min(height.toFloat(), (yPos + heightBox / 2).toFloat()),
                         classProb.toFloat()
                     )
                 )
@@ -522,19 +451,15 @@ class MainActivity : AppCompatActivity() {
         }
 
 
-        val postProcessedBoxes = nonMaxSuppression(boundingBoxes, 0.1f)
+        val postProcessedBoxes = nonMaxSuppression(boundingBoxes, 0.5f)
 
-        val finalBoundingBox = updateSort(postProcessedBoxes)
-//        Log.d("FINAL BOX", finalBoundingBox.toString())
-
-//        for (box in postProcessedBoxes) {
-//            Log.d("BOX BEFORE", Arrays.toString(box))
-//        }
-        for (box in finalBoundingBox) {
+        finalBoundingBoxes = updateSort(postProcessedBoxes)
+        for (box in this.finalBoundingBoxes) {
             Log.d("BOX", Arrays.toString(box))
         }
 
-        viewBinding.overlay.setRect(finalBoundingBox)
+
+
         val endTime = SystemClock.uptimeMillis()
         val inferenceTime = endTime - startTime
         Log.d("Analyze", "Inference time Thread: $inferenceTime ms")
