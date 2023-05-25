@@ -6,21 +6,13 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     tools:context=".MainActivity">
-<!--    <androidx.camera.view.PreviewView-->
-<!--        android:id="@+id/viewFinder"-->
-<!--        android:layout_width="match_parent"-->
-<!--        android:layout_height="match_parent" />-->
-
 
     <ImageView
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:id="@+id/viewImage"/>
-
-    <com.example.cameraxapptorch.GraphOverlay
-        android:id="@+id/overlay"
+        android:id="@+id/viewImage"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
+
+
 
 
 
