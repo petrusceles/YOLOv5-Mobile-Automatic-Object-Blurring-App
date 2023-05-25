@@ -7,6 +7,10 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.*
 import android.hardware.camera2.CameraCharacteristics
+import android.media.MediaCodec
+import android.media.MediaCodecInfo
+import android.media.MediaFormat
+import android.media.MediaMuxer
 import android.media.MediaRecorder
 import android.os.Build
 import android.os.Bundle
@@ -14,6 +18,7 @@ import android.os.Environment
 import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.Log
+import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
@@ -72,6 +77,7 @@ import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import java.io.File
 import java.io.IOException
+import kotlin.properties.Delegates
 
 
 class MainActivity : AppCompatActivity() {
@@ -101,14 +107,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var module: PyObject
 
     private var finalBoundingBoxes: MutableList<FloatArray> = mutableListOf()
+//    private var finalBitmap: Bitmap? = null
 
+    private lateinit var outputDirectory: File
+    private lateinit var mediaMuxer: MediaMuxer
+    private lateinit var videoEncoder: MediaCodec
+    private lateinit var videoEncoderOutputSurface: Surface
     private var isRecording = false
-    private lateinit var mediaRecorder: MediaRecorder
 
-    private var finalBitmap: Bitmap? = null
 
-    private lateinit var surfaceHolder: SurfaceHolder
-    private lateinit var surfaceView: SurfaceView
+
 
     override fun onCreate(savedInstanceState: Bundle?) {
 
@@ -126,10 +134,11 @@ class MainActivity : AppCompatActivity() {
         }
         val windowInsetsController =
             WindowCompat.getInsetsController(window, window.decorView)
-        // Configure the behavior of the hidden system bars.
+
         windowInsetsController.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         windowInsetsController.hide(WindowInsetsCompat.Type.systemBars())
+
         val tfliteModel = loadModelFile(this)
         val options = Interpreter.Options()
         options.useNNAPI = true
@@ -150,10 +159,6 @@ class MainActivity : AppCompatActivity() {
         outputSize = outputShape[0] * outputShape[1] * outputShape[2]  // height * width * channels
         interpreter = Interpreter(tfliteModel, options)
 
-
-        // Set up the listeners for take photo and video capture buttons
-//        viewBinding.imageCaptureButton.setOnClickListener { takePhoto() }
-
         cameraExecutor = Executors.newSingleThreadExecutor()
 
         if (!Python.isStarted()) {
@@ -163,143 +168,17 @@ class MainActivity : AppCompatActivity() {
         val py = Python.getInstance()
         this.module = py.getModule("lsa")
 
+        outputDirectory = getOutputDirectory()
+
         viewBinding.videoCaptureButton.setOnClickListener {
             if (isRecording) {
-                stopRecording()
+                stopVideoRecording()
+                viewBinding.videoCaptureButton.text = "Start Recording"
             } else {
-                startRecording()
+                startVideoRecording()
+                viewBinding.videoCaptureButton.text = "Stop Recording"
             }
-        }
-        surfaceView = viewBinding.surfaceView
-        surfaceHolder = surfaceView.holder
-        surfaceHolder.addCallback(object : SurfaceHolder.Callback {
-            override fun surfaceCreated(holder: SurfaceHolder) {
-                // Surface created, you can now draw on it
-                // Display your bitmap here
-                drawBitmapOnSurface()
-            }
-
-            override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-                // Surface destroyed, clean up resources
-                // Surface size or format
-                drawBitmapOnSurface()
-            }
-
-            override fun surfaceDestroyed(holder: SurfaceHolder) {
-            }
-        })
-
-    }
-
-
-    private fun drawBitmapOnSurface() {
-        val canvas = surfaceHolder.lockCanvas()
-        try {
-            if (canvas != null) {
-                // Clear the canvas
-                canvas.drawColor(Color.BLACK)
-
-                // Calculate the scaling factors for the bitmap to fit the screen
-                val surfaceWidth = surfaceView.width.toFloat()
-                val surfaceHeight = surfaceView.height.toFloat()
-                val bitmapWidth = finalBitmap?.width ?: 0
-                val bitmapHeight = finalBitmap?.height ?: 0
-
-                val scaleX = surfaceWidth / bitmapWidth
-                val scaleY = surfaceHeight / bitmapHeight
-                val scale = scaleX.coerceAtMost(scaleY)
-
-                // Calculate the scaled dimensions of the bitmap
-                val scaledWidth = (bitmapWidth * scale).toInt()
-                val scaledHeight = (bitmapHeight * scale).toInt()
-
-                // Calculate the destination rectangle for the scaled bitmap
-                val destLeft = (surfaceWidth - scaledWidth) / 2
-                val destTop = (surfaceHeight - scaledHeight) / 2
-                val destRight = destLeft + scaledWidth
-                val destBottom = destTop + scaledHeight
-                val destRect = Rect(destLeft.toInt(), destTop.toInt(), destRight.toInt(), destBottom.toInt())
-
-                // Draw the scaled bitmap on the canvas
-                finalBitmap?.let {
-                    canvas.drawBitmap(it, null, destRect, Paint())
-                }
-            }
-        } finally {
-            surfaceHolder.unlockCanvasAndPost(canvas)
-        }
-    }
-
-
-    private fun getOutputFilePath(): String {
-        val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-
-        // Create a file name with the current timestamp
-        val fileName = "video_$timeStamp.mp4"
-
-        // Replace with your desired directory path
-        val directory = Environment.getExternalStorageDirectory().absolutePath + "/recordings/"
-
-        // Create the directory if it doesn't exist
-        val dir = File(directory)
-        if (!dir.exists()) {
-            dir.mkdirs()
-        }
-
-        // Return the complete file path
-        return directory + fileName
-    }
-    // Start the recording
-    private fun startRecording() {
-
-        // Create a new MediaRecorder instance
-        mediaRecorder = MediaRecorder()
-
-        // Configure the audio source, output format, and encoding parameters
-        mediaRecorder.setAudioSource(MediaRecorder.AudioSource.MIC)
-        mediaRecorder.setVideoSource(MediaRecorder.VideoSource.SURFACE)
-        mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-        mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-        mediaRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.DEFAULT)
-
-        val outputFilePath = getOutputFilePath()
-        mediaRecorder.setOutputFile(outputFilePath)
-
-        try {
-            // Configure the MediaRecorder
-
-            mediaRecorder.prepare()
-//            mediaRecorder.setPreviewDisplay(surfaceHolder.surface)
-            // Start the recording
-            mediaRecorder.start()
-            isRecording = true
-
-
-            viewBinding.videoCaptureButton.text = "Stop Recording"
-        } catch (e: IOException) {
-            // Handle any errors
-            e.printStackTrace()
-            Toast.makeText(this, "Failed to start recording", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    // Stop the recording
-    private fun stopRecording() {
-        try {
-            // Stop the recording
-            mediaRecorder.stop()
-
-            // Reset the MediaRecorder
-            mediaRecorder.reset()
-
-            mediaRecorder.release()
-            isRecording = false
-            viewBinding.videoCaptureButton.text = "Start Recording"
-            Toast.makeText(this, "Recording saved", Toast.LENGTH_SHORT).show()
-        } catch (e: Exception) {
-            // Handle any errors
-            e.printStackTrace()
-            Toast.makeText(this, "Failed to stop recording", Toast.LENGTH_SHORT).show()
+            isRecording = !isRecording
         }
     }
 
@@ -310,7 +189,6 @@ class MainActivity : AppCompatActivity() {
             // Used to bind the lifecycle of cameras to the lifecycle owner
             val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
 
-            imageCapture = ImageCapture.Builder().build()
 
             val imageAnalyzer = ImageAnalysis.Builder()
                 .setTargetAspectRatio(AspectRatio.RATIO_16_9)
@@ -340,6 +218,7 @@ class MainActivity : AppCompatActivity() {
                 }.requireLensFacing(LENS_FACING_BACK).build()
 
 
+
             try {
                 // Unbind use cases before rebinding
                 cameraProvider.unbindAll()
@@ -354,6 +233,78 @@ class MainActivity : AppCompatActivity() {
             }
 
         }, ContextCompat.getMainExecutor(this))
+    }
+
+    private fun processBitmapFrame(bitmap: Bitmap) {
+        if (::videoEncoder.isInitialized) {
+            val inputBufferIndex = videoEncoder.dequeueInputBuffer(-1)
+            if (inputBufferIndex >= 0) {
+                val inputBuffer = videoEncoder.getInputBuffer(inputBufferIndex)
+                inputBuffer?.clear()
+                inputBuffer?.put(getByteBufferFromBitmap(bitmap))
+                videoEncoder.queueInputBuffer(inputBufferIndex, 0, inputBuffer?.limit() ?: 0, 0, 0)
+            }
+        }
+    }
+
+    private fun startVideoRecording() {
+        val videoFile = createVideoFile()
+
+        try {
+            mediaMuxer = MediaMuxer(videoFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            configureVideoEncoder()
+            mediaMuxer.start()
+        } catch (ex: IOException) {
+            Log.e(TAG, "Error starting video recording: ${ex.message}")
+        }
+    }
+
+    private fun stopVideoRecording() {
+        try {
+            mediaMuxer.stop()
+            mediaMuxer.release()
+            videoEncoder.stop()
+            videoEncoder.release()
+        } catch (ex: Exception) {
+            Log.e(TAG, "Error stopping video recording: ${ex.message}")
+        }
+    }
+
+    private fun configureVideoEncoder() {
+        val videoEncoderFormat =
+            MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, VIDEO_WIDTH, VIDEO_HEIGHT)
+        videoEncoderFormat.setInteger(
+            MediaFormat.KEY_COLOR_FORMAT,
+            MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface
+        )
+        videoEncoderFormat.setInteger(MediaFormat.KEY_BIT_RATE, VIDEO_BIT_RATE)
+        videoEncoderFormat.setInteger(MediaFormat.KEY_FRAME_RATE, VIDEO_FRAME_RATE)
+        videoEncoderFormat.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, VIDEO_I_FRAME_INTERVAL)
+
+        videoEncoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+        videoEncoder.configure(videoEncoderFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        videoEncoderOutputSurface = videoEncoder.createInputSurface()
+        videoEncoder.start()
+    }
+
+    private fun createVideoFile(): File {
+        val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+        val videoFileName = "VID_$timeStamp.mp4"
+        return File(outputDirectory, videoFileName)
+    }
+
+    private fun getOutputDirectory(): File {
+        val mediaDir = externalMediaDirs.firstOrNull()?.let {
+            File(it, resources.getString(R.string.app_name)).apply { mkdirs() }
+        }
+        return mediaDir ?: filesDir
+    }
+
+    private fun getByteBufferFromBitmap(bitmap: Bitmap): ByteBuffer {
+        val buffer = ByteBuffer.allocate(bitmap.byteCount)
+        bitmap.copyPixelsToBuffer(buffer)
+        buffer.rewind()
+        return buffer
     }
 
 
@@ -414,10 +365,7 @@ class MainActivity : AppCompatActivity() {
         }.toMutableList()
     }
     private fun analyzer(imageProxy: ImageProxy) {
-
-
-        val rotation = imageProxy.imageInfo.rotationDegrees
-        val resizedBitmap = imageProxyToBitmap(imageProxy,rotation)
+        val resizedBitmap = imageProxyToBitmap(imageProxy,imageProxy.imageInfo.rotationDegrees)
         val scaledBitmap = Bitmap.createScaledBitmap(
             resizedBitmap, inputShape[2], inputShape[2], false
         )
@@ -432,15 +380,19 @@ class MainActivity : AppCompatActivity() {
         }
 
         val startTime = SystemClock.uptimeMillis()
-        drawRectangleAndShow(resizedBitmap)
-//        drawBitmapOnSurface()
+        val finalBitmap = drawRectangleAndShow(resizedBitmap)
         viewBinding.viewImage.setImageBitmap(finalBitmap)
+//        if (isRecording) {
+//            if (finalBitmap != null) {
+//                processBitmapFrame(finalBitmap)
+//            }
+//        }
         val timeSpent = (SystemClock.uptimeMillis() - startTime).toInt()
         Log.d("TIME SPENT", "$timeSpent ms")
         imageProxy.close()
     }
 
-    private fun drawRectangleAndShow(bitmap: Bitmap) {
+    private fun drawRectangleAndShow(bitmap: Bitmap): Bitmap? {
         val mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true)
 
         val canvas = Canvas(mutableBitmap)
@@ -482,7 +434,7 @@ class MainActivity : AppCompatActivity() {
             // Draw the blurred region onto the canvas
             canvas.drawBitmap(blurredRegion, left.toFloat(), top.toFloat(), blurPaint)
         }
-            finalBitmap = mutableBitmap
+            return mutableBitmap
 
 //            viewBinding.viewImage.setImageBitmap(finalBitmap)
     }
@@ -873,7 +825,6 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "CameraXApp"
-        private const val FILENAME_FORMAT = "yyyy-MM-dd-HH-mm-ss-SSS"
         private const val REQUEST_CODE_PERMISSIONS = 10
         private val REQUIRED_PERMISSIONS =
             mutableListOf (
@@ -884,6 +835,12 @@ class MainActivity : AppCompatActivity() {
                     add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
                 }
             }.toTypedArray()
+
+        private const val VIDEO_WIDTH = 1280
+        private const val VIDEO_HEIGHT = 720
+        private const val VIDEO_BIT_RATE = 3_000_000
+        private const val VIDEO_FRAME_RATE = 30
+        private const val VIDEO_I_FRAME_INTERVAL = 5
     }
 
 
