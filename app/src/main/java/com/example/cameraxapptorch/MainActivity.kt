@@ -77,6 +77,7 @@ import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import java.io.File
 import java.io.IOException
+import java.nio.FloatBuffer
 import kotlin.properties.Delegates
 
 
@@ -115,6 +116,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var videoEncoderOutputSurface: Surface
     private var isRecording = false
 
+    private val dequantizeFactor =  0.00415377039462328f
+    private val dequantizeBias = 6f
 
 
 
@@ -188,6 +191,9 @@ class MainActivity : AppCompatActivity() {
         cameraProviderFuture.addListener({
             // Used to bind the lifecycle of cameras to the lifecycle owner
             val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
+
+//            val preview = Preview.Builder().build()
+//            preview.setSurfaceProvider(viewBinding.viewFinder.surfaceProvider)
 
 
             val imageAnalyzer = ImageAnalysis.Builder()
@@ -373,7 +379,7 @@ class MainActivity : AppCompatActivity() {
 
 //        Log.d("BITMAP INFO", "Width : ${resizedBitmap.width} Height : ${resizedBitmap.height}")
 //        Log.d("SCREEN INFO", "Width : ${viewBinding.viewImage.width} Height : ${viewBinding.viewImage.height}")
-
+//        Log.d("INPUT SHAPE", inputShape.contentToString())
 
         executor.execute {
             inferenceAndPostProcess(inputBuffer, resizedBitmap.width, resizedBitmap.height)
@@ -381,12 +387,8 @@ class MainActivity : AppCompatActivity() {
 
         val startTime = SystemClock.uptimeMillis()
         val finalBitmap = drawRectangleAndShow(resizedBitmap)
+
         viewBinding.viewImage.setImageBitmap(finalBitmap)
-//        if (isRecording) {
-//            if (finalBitmap != null) {
-//                processBitmapFrame(finalBitmap)
-//            }
-//        }
         val timeSpent = (SystemClock.uptimeMillis() - startTime).toInt()
         Log.d("TIME SPENT", "$timeSpent ms")
         imageProxy.close()
@@ -439,24 +441,60 @@ class MainActivity : AppCompatActivity() {
 //            viewBinding.viewImage.setImageBitmap(finalBitmap)
     }
 
+    private fun createInputBufferFloat(resizedBitmap: Bitmap): FloatBuffer {
+        val inputBuffer = ByteBuffer.allocateDirect(inputSize*4)
+        inputBuffer.order(ByteOrder.nativeOrder())
+        val intValues = IntArray(inputShape[1]*inputShape[2])
+        resizedBitmap.getPixels(intValues,0,inputShape[1], 0, 0, inputShape[1], inputShape[2])
+
+        val floatValues = FloatArray(inputSize)
+        var pixel = 0
+        for (i in 0 until inputShape[1]*inputShape[2]) {
+            val value = intValues[pixel++]
+
+            val r = (value shr 16 and 0xFF)
+            val g = (value shr 8 and 0xFF)
+            val b = (value and 0xFF)
+
+            floatValues[i * inputShape[3]] = (r - 127.5f) / 127.5f
+            floatValues[i * inputShape[3] + 1] = (g - 127.5f) / 127.5f
+            floatValues[i * inputShape[3] + 2] = (b - 127.5f) / 127.5f
+        }
+        val floatBuffer = inputBuffer.asFloatBuffer()
+        floatBuffer.put(floatValues)
+        inputBuffer.rewind()
+        return floatBuffer
+    }
+
     private fun createInputBuffer(resizedBitmap: Bitmap): ByteBuffer {
-        val inputBuffer = ByteBuffer.allocateDirect(inputSize * inputType.byteSize()).apply {
-            order(ByteOrder.nativeOrder())
-            rewind()
+        val inputBuffer = ByteBuffer.allocateDirect(inputSize)
+        inputBuffer.order(ByteOrder.nativeOrder())
+
+        val intValues = IntArray(inputShape[1]*inputShape[2])
+        resizedBitmap.getPixels(intValues,0,inputShape[1], 0, 0, inputShape[1], inputShape[2])
+
+        for (value in intValues) {
+            // Extract RGB channel values from the pixel
+            val r = (value shr 16 and 0xFF).toByte()
+            val g = (value shr 8 and 0xFF).toByte()
+            val b = (value and 0xFF).toByte()
+
+            // Store the RGB values in the input buffer
+            inputBuffer.put(r)
+            inputBuffer.put(g)
+            inputBuffer.put(b)
         }
-
-        val pixels = IntArray(inputShape[1] * inputShape[2])
-        resizedBitmap.getPixels(pixels, 0, inputShape[2], 0, 0, inputShape[2], inputShape[1])
-
-        for (pixel in pixels) {
-            inputBuffer.put((pixel and 0xFF).toByte())
-            inputBuffer.put((pixel shr 8 and 0xFF).toByte())
-            inputBuffer.put((pixel shr 16 and 0xFF).toByte())
-        }
-
         inputBuffer.rewind()
         return inputBuffer
     }
+
+//    private fun createInputBufferVersion2(resizedBitmap: Bitmap) :ByteBuffer {
+//        val inputBuffer = ByteBuffer.allocateDirect(inputSize)
+//        inputBuffer.order(ByteOrder.nativeOrder())
+//        inputBuffer.rewind()
+//
+//
+//    }
 
     private fun imageProxyToBitmap(imageProxy: ImageProxy, rotation: Int): Bitmap {
         val yBuffer = imageProxy.planes[0].buffer // Y
@@ -495,47 +533,101 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun inferenceAndPostProcess(inputBuffer: ByteBuffer, width: Int, height: Int) {
+    private fun inferenceAndPostProcessFloat(inputBuffer: FloatBuffer,width: Int, height: Int) {
+
         val startTime = SystemClock.uptimeMillis()
-        val outputBuffer = Array(1) {
-            Array(outputShape[1]) {
-                ByteArray(6)
+        val outputBuffer = ByteBuffer.allocateDirect(outputSize*4)
+        outputBuffer.order(ByteOrder.nativeOrder())
+
+        interpreter.run(inputBuffer,outputBuffer)
+
+        outputBuffer.rewind()
+        val outputFloatArray = FloatArray(outputSize)
+        outputBuffer.asFloatBuffer().get(outputFloatArray)
+
+        val filteredResults = mutableListOf<FloatArray>()
+
+        for (i in 0 until outputSize step 6) {
+            val singleOutput = outputFloatArray.copyOfRange(i, i + 5)
+
+            if (singleOutput[4] > 0.5f) {
+                filteredResults.add(singleOutput)
             }
         }
-        interpreter.run(inputBuffer, outputBuffer)
-        val boundingBoxes = mutableListOf<FloatArray>()
-        for (i in 0 until outputShape[1]) {
-            val classProb = (0.011072992347180843 * (outputBuffer[0][i][4] - 2))
-            if (classProb >= 0.6) {
+
+        val postProcessedBoxes = nonMaxSuppression(filteredResults, 0.45f)
+
+        finalBoundingBoxes = updateSort(postProcessedBoxes)
+
+        for (box in postProcessedBoxes) {
+            Log.d("BOX", Arrays.toString(box))
+        }
+
+
+        val endTime = SystemClock.uptimeMillis()
+        val inferenceTime = endTime - startTime
+        Log.d("Analyze", "Inference time Thread: $inferenceTime ms")
+
+    }
+
+    @SuppressLint("SuspiciousIndentation")
+    private fun inferenceAndPostProcess(inputBuffer: ByteBuffer, width: Int, height: Int) {
+        val startTime = SystemClock.uptimeMillis()
+
+        val outputBuffer = ByteBuffer.allocateDirect(outputSize)
+        outputBuffer.order(ByteOrder.nativeOrder())
+
+        outputBuffer.rewind()
+
+        interpreter.run(inputBuffer,outputBuffer)
+
+        outputBuffer.rewind()
+
+        val outputByteArray = ByteArray(outputSize)
+        outputBuffer.get(outputByteArray)
+
+        val filteredResults = mutableListOf<FloatArray>()
+
+        for (i in 0 until outputSize step 6) {
+            val singleOutput = outputByteArray.copyOfRange(i, i + 6)
+
+            val dequantizedValues = FloatArray(6)
+            for (j in singleOutput.indices) {
+                val quantizedValue = singleOutput[j].toUByte().toFloat()
+                dequantizedValues[j] = dequantizeFactor * (quantizedValue - dequantizeBias)
+            }
+
+            if (dequantizedValues[4] > 0.7f) {
                 val xPos =
-                    (0.011072992347180843 * (outputBuffer[0][i][0] - 2)) * width
+                    dequantizedValues[0] * width
                 val yPos =
-                    (0.011072992347180843 * (outputBuffer[0][i][1] - 2)) * height
+                    dequantizedValues[1] * height
                 val widthBox =
-                    (0.011072992347180843 * (outputBuffer[0][i][2] - 2)) * width
+                    dequantizedValues[2] * width
                 val heightBox =
-                    (0.011072992347180843 * (outputBuffer[0][i][3] - 2)) * height
-                boundingBoxes.add(
+                    dequantizedValues[3] * height
+                filteredResults.add(
                     floatArrayOf(
                         max(0f, (xPos - widthBox / 2).toFloat()),
                         max(0f, (yPos - heightBox / 2).toFloat()),
                         min(width.toFloat(), (xPos + widthBox / 2).toFloat()),
                         min(height.toFloat(), (yPos + heightBox / 2).toFloat()),
-                        classProb.toFloat()
+                        dequantizedValues[4]
                     )
                 )
             }
         }
 
 
-        val postProcessedBoxes = nonMaxSuppression(boundingBoxes, 0.5f)
 
-        finalBoundingBoxes = updateSort(postProcessedBoxes)
-        for (box in this.finalBoundingBoxes) {
+        val postProcessedBoxes = nonMaxSuppression(filteredResults, 0.9f)
+
+        postProcessedBoxes.sortByDescending { it[4] }
+
+        finalBoundingBoxes = postProcessedBoxes.take(10) as MutableList<FloatArray>
+        for (box in postProcessedBoxes) {
             Log.d("BOX", Arrays.toString(box))
         }
-
-
 
         val endTime = SystemClock.uptimeMillis()
         val inferenceTime = endTime - startTime
@@ -803,7 +895,7 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun loadModelFile(context: Context): MappedByteBuffer {
-        val fileDescriptor = context.assets.openFd("person-416-int8.tflite")
+        val fileDescriptor = context.assets.openFd("best-300e-int8.tflite")
         val inputStream = FileInputStream(fileDescriptor.fileDescriptor)
         val fileChannel = inputStream.channel
         val startOffset = fileDescriptor.startOffset
