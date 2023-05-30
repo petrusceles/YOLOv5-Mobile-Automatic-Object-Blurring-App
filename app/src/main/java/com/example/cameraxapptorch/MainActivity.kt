@@ -110,8 +110,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var surfaceHolder: SurfaceHolder
     private lateinit var surfaceView: SurfaceView
 
-    private val dequantizeFactor = 0.0040105776861310005
-    private val dequantizeBias = 6
+    private val dequantizeFactor = 0.013170517981052399
+    private val dequantizeBias = 3
 
     override fun onCreate(savedInstanceState: Bundle?) {
 
@@ -318,6 +318,7 @@ class MainActivity : AppCompatActivity() {
             val imageAnalyzer = ImageAnalysis.Builder()
                 .setTargetAspectRatio(AspectRatio.RATIO_16_9)
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
                 .build()
 
 //            imageAnalyzer.sett
@@ -424,6 +425,7 @@ class MainActivity : AppCompatActivity() {
         val scaledBitmap = Bitmap.createScaledBitmap(
             resizedBitmap, inputShape[2], inputShape[2], false
         )
+
         val inputBuffer = createInputBuffer(scaledBitmap)
 
 //        Log.d("BITMAP INFO", "Width : ${resizedBitmap.width} Height : ${resizedBitmap.height}")
@@ -435,9 +437,12 @@ class MainActivity : AppCompatActivity() {
         }
 
         val startTime = SystemClock.uptimeMillis()
-//        drawRectangleAndShow(resizedBitmap)
+        drawRectangleAndShow(resizedBitmap)
 //        drawBitmapOnSurface()
-        viewBinding.viewImage.setImageBitmap(resizedBitmap)
+        for (box in finalBoundingBoxes) {
+            Log.d("BOX", box.contentToString())
+        }
+//        viewBinding.viewImage.setImageBitmap(resizedBitmap)
         val timeSpent = (SystemClock.uptimeMillis() - startTime).toInt()
         Log.d("TIME SPENT", "$timeSpent ms")
         imageProxy.close()
@@ -487,7 +492,7 @@ class MainActivity : AppCompatActivity() {
         }
             finalBitmap = mutableBitmap
 
-//            viewBinding.viewImage.setImageBitmap(finalBitmap)
+            viewBinding.viewImage.setImageBitmap(finalBitmap)
     }
 
     private fun createInputBuffer(resizedBitmap: Bitmap): ByteBuffer {
@@ -511,6 +516,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun imageProxyToBitmap(imageProxy: ImageProxy, rotation: Int): Bitmap {
+
         val yBuffer = imageProxy.planes[0].buffer // Y
         val uBuffer = imageProxy.planes[1].buffer // U
         val vBuffer = imageProxy.planes[2].buffer // V
@@ -543,56 +549,62 @@ class MainActivity : AppCompatActivity() {
                 )
             }
 
-            return bitmap
+        return bitmap
         }
+
     }
 
     private fun inferenceAndPostProcess(inputBuffer: ByteBuffer, width: Int, height: Int) {
         val startTime = SystemClock.uptimeMillis()
         val outputBuffer = Array(1) {
             Array(outputShape[1]) {
-                FloatArray(6)
+                ByteArray(6)
             }
         }
         interpreter.run(inputBuffer, outputBuffer)
         val boundingBoxes = mutableListOf<FloatArray>()
+
         for (i in 0 until outputShape[1]) {
-//            val classProb = (dequantizeFactor * outputBuffer[0][i][4] - dequantizeBias).toFloat()
-            val classProb = outputBuffer[0][i][4]
-            if (classProb >= 0.4) {
-//                val xPos =
-//                    (dequantizeFactor * outputBuffer[0][i][0] - dequantizeBias) * width
-                val xPos = outputBuffer[0][i][0] * width
-                Log.d("X Center", outputBuffer[0][i][0].toString())
-//                val yPos =
-//                    (dequantizeFactor * outputBuffer[0][i][1] - dequantizeBias) * height
-                val yPos = outputBuffer[0][i][1] * height
-                Log.d("Y Center", yPos.toString())
-//                val widthBox =
-//                    (dequantizeFactor * outputBuffer[0][i][2] - dequantizeBias) * width
-                val widthBox = outputBuffer[0][i][2] * width
-                Log.d("WIDTH BOX", widthBox.toString())
-//                val heightBox =
-//                    (dequantizeFactor * outputBuffer[0][i][3] - dequantizeBias) * height
-                val heightBox = outputBuffer[0][i][3] * height
-                Log.d("HEIGHT BOX", heightBox.toString())
+            val quantizedValue = outputBuffer[0][i][4]
+            val objScore = (dequantizeFactor * (outputBuffer[0][i][4] - dequantizeBias)).toFloat()
+            val classProb = (dequantizeFactor * (outputBuffer[0][i][5] - dequantizeBias)).toFloat()
+            val confScore = classProb * objScore
+//            val classProb = outputBuffer[0][i][4]
+            if (objScore > 0.20f) {
+//                Log.d("Class PROB", classProb.toString())
+                val xPos =
+                    (dequantizeFactor * (outputBuffer[0][i][0] - dequantizeBias)) * width
+//                val xPos = outputBuffer[0][i][0] * width
+//                Log.d("X Center", xPos.toString())
+                val yPos =
+                    (dequantizeFactor * (outputBuffer[0][i][1] - dequantizeBias)) * height
+//                val yPos = outputBuffer[0][i][1] * height
+//                Log.d("Y Center", yPos.toString())
+                val widthBox =
+                    (dequantizeFactor * (outputBuffer[0][i][2] - dequantizeBias)) * width
+//                val widthBox = outputBuffer[0][i][2] * width
+//                Log.d("WIDTH BOX", widthBox.toString())
+                val heightBox =
+                    (dequantizeFactor * (outputBuffer[0][i][3] - dequantizeBias)) * height
+//                val heightBox = outputBuffer[0][i][3] * height
+//                Log.d("HEIGHT BOX", heightBox.toString())
                 val box = floatArrayOf(
-                        max(0f, (xPos - widthBox / 2).toFloat()),
-                        max(0f, (yPos - heightBox / 2).toFloat()),
-                        min(width.toFloat(), (xPos + widthBox / 2).toFloat()),
-                        min(height.toFloat(), (yPos + heightBox / 2).toFloat()),
-                        classProb.toFloat()
-                    )
-                Log.d("BOX", Arrays.toString(box))
-                Log.d("JEDA", "================================================================")
-//                boundingBoxes.add(box)
+                    max(0f, (xPos - widthBox / 2).toFloat()),
+                    max(0f, (yPos - heightBox / 2).toFloat()),
+                    min(width.toFloat(), (xPos + widthBox / 2).toFloat()),
+                    min(height.toFloat(), (yPos + heightBox / 2).toFloat()),
+                    objScore
+                )
+//                Log.d("BOX", Arrays.toString(box))
+//                Log.d("JEDA", "================================================================")
+                boundingBoxes.add(box)
             }
         }
 
 
-//        val postProcessedBoxes = nonMaxSuppression(boundingBoxes, 0.5f)
-        finalBoundingBoxes = boundingBoxes
-//        finalBoundingBoxes = updateSort(postProcessedBoxes)
+        val postProcessedBoxes = nonMaxSuppression(boundingBoxes, 0.45f)
+//        finalBoundingBoxes = postProcessedBoxes
+        finalBoundingBoxes = updateSort(postProcessedBoxes)
 
 
 
@@ -862,7 +874,7 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun loadModelFile(context: Context): MappedByteBuffer {
-        val fileDescriptor = context.assets.openFd("best-300e-fp16.tflite")
+        val fileDescriptor = context.assets.openFd("best-200e-yolov5n-416-int8.tflite")
         val inputStream = FileInputStream(fileDescriptor.fileDescriptor)
         val fileChannel = inputStream.channel
         val startOffset = fileDescriptor.startOffset
