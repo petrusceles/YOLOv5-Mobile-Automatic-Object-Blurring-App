@@ -2,36 +2,25 @@ package com.example.cameraxapptorch
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.*
 import android.hardware.camera2.CameraCharacteristics
-import android.media.MediaRecorder
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.SystemClock
-import android.provider.MediaStore
 import android.util.Log
-import android.view.SurfaceHolder
-import android.view.SurfaceView
-import android.view.View
-import android.view.Window
-import android.view.WindowManager
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.camera2.interop.Camera2CameraInfo
-import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.*
 import androidx.camera.core.CameraSelector.LENS_FACING_BACK
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.*
-import androidx.camera.video.VideoCapture
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.core.content.PermissionChecker
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -39,21 +28,21 @@ import androidx.renderscript.Allocation
 import androidx.renderscript.Element
 import androidx.renderscript.RenderScript
 import androidx.renderscript.ScriptIntrinsicBlur
+import com.chaquo.python.PyObject
+import com.chaquo.python.Python
+import com.chaquo.python.android.AndroidPlatform
 import com.example.cameraxapptorch.databinding.ActivityMainBinding
-import org.apache.commons.math3.linear.Array2DRowRealMatrix
-import org.apache.commons.math3.linear.ArrayRealVector
-import org.apache.commons.math3.linear.MatrixUtils
-import org.apache.commons.math3.linear.RealMatrix
+import org.apache.commons.math3.linear.*
 import org.apache.commons.math3.optim.linear.*
-import org.apache.commons.math3.optim.nonlinear.scalar.GoalType
-import org.apache.commons.math3.optim.nonlinear.scalar.ObjectiveFunction
-import org.tensorflow.lite.DataType
-import org.tensorflow.lite.Interpreter
-import org.tensorflow.lite.Tensor
+import org.pytorch.IValue
+import org.pytorch.Module
+import org.pytorch.Tensor
+import org.pytorch.torchvision.TensorImageUtils
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.FileInputStream
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
+import java.io.FileOutputStream
+import java.io.IOException
 import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 import java.text.SimpleDateFormat
@@ -62,16 +51,6 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlin.math.max
 import kotlin.math.min
-import org.apache.commons.math3.optim.linear.*
-import org.apache.commons.math3.linear.*
-import org.apache.commons.math3.optimization.linear.SimplexSolver
-import org.apache.commons.math3.optimization.linear.UnboundedSolutionException
-import com.chaquo.python.PyException
-import com.chaquo.python.PyObject
-import com.chaquo.python.Python
-import com.chaquo.python.android.AndroidPlatform
-import java.io.File
-import java.io.IOException
 
 
 class MainActivity : AppCompatActivity() {
@@ -82,15 +61,6 @@ class MainActivity : AppCompatActivity() {
 
     private val executor = Executors.newSingleThreadExecutor()
 
-    private lateinit var interpreter: Interpreter
-    private lateinit var inputTensor: Tensor
-    private lateinit var inputShape: IntArray
-    private lateinit var inputType: DataType
-    private var inputSize: Int = 0
-    private lateinit var outputTensor: Tensor
-    private lateinit var outputShape: IntArray
-    private lateinit var outputType: DataType
-    private var outputSize: Int = 0
 
     //SORT
     private var objectTrackers: MutableList<KalmanBoxTracker> = mutableListOf()
@@ -101,18 +71,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var module: PyObject
 
     private var finalBoundingBoxes: MutableList<FloatArray> = mutableListOf()
-
-    private var isRecording = false
-    private lateinit var mediaRecorder: MediaRecorder
-
     private var finalBitmap: Bitmap? = null
 
-    private lateinit var surfaceHolder: SurfaceHolder
-    private lateinit var surfaceView: SurfaceView
-
-    private val dequantizeFactor = 0.0040105776861310005
-    private val dequantizeBias = 6
-
+    private lateinit var moduleTorch: Module
     override fun onCreate(savedInstanceState: Bundle?) {
 
         super.onCreate(savedInstanceState)
@@ -133,29 +94,8 @@ class MainActivity : AppCompatActivity() {
         windowInsetsController.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         windowInsetsController.hide(WindowInsetsCompat.Type.systemBars())
-        val tfliteModel = loadModelFile(this)
-        val options = Interpreter.Options()
-        options.useNNAPI = true
-        options.numThreads = 2
-        interpreter = Interpreter(tfliteModel, options)
-
-        inputTensor = interpreter.getInputTensor(0)
-        inputShape = inputTensor.shape()  // [batch_size, height, width, channels]
-        inputType = inputTensor.dataType()
-
-        inputSize = inputShape[1] * inputShape[2] * inputShape[3]  // height * width * channels
 
 
-        outputTensor = interpreter.getOutputTensor(0)
-        outputShape = outputTensor.shape()  // [batch_size, height, width, channels]
-        outputType = outputTensor.dataType()
-
-        outputSize = outputShape[0] * outputShape[1] * outputShape[2]  // height * width * channels
-        interpreter = Interpreter(tfliteModel, options)
-
-
-        // Set up the listeners for take photo and video capture buttons
-//        viewBinding.imageCaptureButton.setOnClickListener { takePhoto() }
 
         cameraExecutor = Executors.newSingleThreadExecutor()
 
@@ -166,71 +106,8 @@ class MainActivity : AppCompatActivity() {
         val py = Python.getInstance()
         this.module = py.getModule("lsa")
 
-        viewBinding.videoCaptureButton.setOnClickListener {
-            if (isRecording) {
-                stopRecording()
-            } else {
-                startRecording()
-            }
-        }
-        surfaceView = viewBinding.surfaceView
-        surfaceHolder = surfaceView.holder
-        surfaceHolder.addCallback(object : SurfaceHolder.Callback {
-            override fun surfaceCreated(holder: SurfaceHolder) {
-                // Surface created, you can now draw on it
-                // Display your bitmap here
-                drawBitmapOnSurface()
-            }
+        this.moduleTorch = Module.load(assetFilePath(this,"best-300e.torchscript"))
 
-            override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-                // Surface destroyed, clean up resources
-                // Surface size or format
-                drawBitmapOnSurface()
-            }
-
-            override fun surfaceDestroyed(holder: SurfaceHolder) {
-            }
-        })
-
-    }
-
-
-    private fun drawBitmapOnSurface() {
-        val canvas = surfaceHolder.lockCanvas()
-        try {
-            if (canvas != null) {
-                // Clear the canvas
-                canvas.drawColor(Color.BLACK)
-
-                // Calculate the scaling factors for the bitmap to fit the screen
-                val surfaceWidth = surfaceView.width.toFloat()
-                val surfaceHeight = surfaceView.height.toFloat()
-                val bitmapWidth = finalBitmap?.width ?: 0
-                val bitmapHeight = finalBitmap?.height ?: 0
-
-                val scaleX = surfaceWidth / bitmapWidth
-                val scaleY = surfaceHeight / bitmapHeight
-                val scale = scaleX.coerceAtMost(scaleY)
-
-                // Calculate the scaled dimensions of the bitmap
-                val scaledWidth = (bitmapWidth * scale).toInt()
-                val scaledHeight = (bitmapHeight * scale).toInt()
-
-                // Calculate the destination rectangle for the scaled bitmap
-                val destLeft = (surfaceWidth - scaledWidth) / 2
-                val destTop = (surfaceHeight - scaledHeight) / 2
-                val destRight = destLeft + scaledWidth
-                val destBottom = destTop + scaledHeight
-                val destRect = Rect(destLeft.toInt(), destTop.toInt(), destRight.toInt(), destBottom.toInt())
-
-                // Draw the scaled bitmap on the canvas
-                finalBitmap?.let {
-                    canvas.drawBitmap(it, null, destRect, Paint())
-                }
-            }
-        } finally {
-            surfaceHolder.unlockCanvasAndPost(canvas)
-        }
     }
 
 
@@ -251,59 +128,6 @@ class MainActivity : AppCompatActivity() {
 
         // Return the complete file path
         return directory + fileName
-    }
-    // Start the recording
-    private fun startRecording() {
-
-        // Create a new MediaRecorder instance
-        mediaRecorder = MediaRecorder()
-
-        // Configure the audio source, output format, and encoding parameters
-        mediaRecorder.setAudioSource(MediaRecorder.AudioSource.MIC)
-        mediaRecorder.setVideoSource(MediaRecorder.VideoSource.SURFACE)
-        mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-        mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-        mediaRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.DEFAULT)
-
-        val outputFilePath = getOutputFilePath()
-        mediaRecorder.setOutputFile(outputFilePath)
-
-        try {
-            // Configure the MediaRecorder
-
-            mediaRecorder.prepare()
-//            mediaRecorder.setPreviewDisplay(surfaceHolder.surface)
-            // Start the recording
-            mediaRecorder.start()
-            isRecording = true
-
-
-            viewBinding.videoCaptureButton.text = "Stop Recording"
-        } catch (e: IOException) {
-            // Handle any errors
-            e.printStackTrace()
-            Toast.makeText(this, "Failed to start recording", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    // Stop the recording
-    private fun stopRecording() {
-        try {
-            // Stop the recording
-            mediaRecorder.stop()
-
-            // Reset the MediaRecorder
-            mediaRecorder.reset()
-
-            mediaRecorder.release()
-            isRecording = false
-            viewBinding.videoCaptureButton.text = "Start Recording"
-            Toast.makeText(this, "Recording saved", Toast.LENGTH_SHORT).show()
-        } catch (e: Exception) {
-            // Handle any errors
-            e.printStackTrace()
-            Toast.makeText(this, "Failed to stop recording", Toast.LENGTH_SHORT).show()
-        }
     }
 
     private fun startCamera() {
@@ -416,31 +240,77 @@ class MainActivity : AppCompatActivity() {
             tuple
         }.toMutableList()
     }
+
+    @Throws(IOException::class)
+    fun assetFilePath(context: Context, assetName: String?): String? {
+        val file = File(context.filesDir, assetName)
+        if (file.exists() && file.length() > 0) {
+            return file.absolutePath
+        }
+        context.assets.open(assetName!!).use { `is` ->
+            FileOutputStream(file).use { os ->
+                val buffer = ByteArray(4 * 1024)
+                var read: Int
+                while (`is`.read(buffer).also { read = it } != -1) {
+                    os.write(buffer, 0, read)
+                }
+                os.flush()
+            }
+            return file.absolutePath
+        }
+    }
     private fun analyzer(imageProxy: ImageProxy) {
 
 
         val rotation = imageProxy.imageInfo.rotationDegrees
         val resizedBitmap = imageProxyToBitmap(imageProxy,rotation)
         val scaledBitmap = Bitmap.createScaledBitmap(
-            resizedBitmap, inputShape[2], inputShape[2], false
+            resizedBitmap, 640, 640, false
         )
-        val inputBuffer = createInputBuffer(scaledBitmap)
-
-//        Log.d("BITMAP INFO", "Width : ${resizedBitmap.width} Height : ${resizedBitmap.height}")
-//        Log.d("SCREEN INFO", "Width : ${viewBinding.viewImage.width} Height : ${viewBinding.viewImage.height}")
-
-
-        executor.execute {
-            inferenceAndPostProcess(inputBuffer, resizedBitmap.width, resizedBitmap.height)
-        }
-
         val startTime = SystemClock.uptimeMillis()
-//        drawRectangleAndShow(resizedBitmap)
-//        drawBitmapOnSurface()
+        val inputTensor = TensorImageUtils.bitmapToFloat32Tensor(scaledBitmap,TensorImageUtils.TORCHVISION_NORM_MEAN_RGB, TensorImageUtils.TORCHVISION_NORM_STD_RGB);
+        val outputTensor = moduleTorch.forward(IValue.from(inputTensor)).toTuple()
         viewBinding.viewImage.setImageBitmap(resizedBitmap)
         val timeSpent = (SystemClock.uptimeMillis() - startTime).toInt()
         Log.d("TIME SPENT", "$timeSpent ms")
         imageProxy.close()
+    }
+
+    private fun imageProxyToBitmap(imageProxy: ImageProxy, rotation: Int): Bitmap {
+        val yBuffer = imageProxy.planes[0].buffer // Y
+        val uBuffer = imageProxy.planes[1].buffer // U
+        val vBuffer = imageProxy.planes[2].buffer // V
+
+        val ySize = yBuffer.remaining()
+        val uSize = uBuffer.remaining()
+        val vSize = vBuffer.remaining()
+
+        val nv21 = ByteArray(ySize + uSize + vSize)
+
+        yBuffer.get(nv21, 0, ySize)
+        vBuffer.get(nv21, ySize, vSize)
+        uBuffer.get(nv21, ySize + vSize, uSize)
+
+        val out = ByteArrayOutputStream(ySize + uSize + vSize)
+        out.use {
+            YuvImage(nv21, ImageFormat.NV21, imageProxy.width, imageProxy.height, null).compressToJpeg(
+                Rect(0, 0, imageProxy.width, imageProxy.height),
+                100,
+                it
+            )
+            val jpegData = it.toByteArray()
+            val bitmap = BitmapFactory.decodeByteArray(jpegData, 0, jpegData.size)
+
+            if (rotation != 0) {
+                val matrix = Matrix()
+                matrix.postRotate(rotation.toFloat())
+                return Bitmap.createBitmap(
+                    bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true
+                )
+            }
+
+            return bitmap
+        }
     }
 
     private fun drawRectangleAndShow(bitmap: Bitmap) {
@@ -485,120 +355,8 @@ class MainActivity : AppCompatActivity() {
             // Draw the blurred region onto the canvas
             canvas.drawBitmap(blurredRegion, left.toFloat(), top.toFloat(), blurPaint)
         }
-            finalBitmap = mutableBitmap
 
 //            viewBinding.viewImage.setImageBitmap(finalBitmap)
-    }
-
-    private fun createInputBuffer(resizedBitmap: Bitmap): ByteBuffer {
-//        Log.d("TYPE", inputType)
-        val inputBuffer = ByteBuffer.allocateDirect(inputSize * inputType.byteSize() ).apply {
-            order(ByteOrder.nativeOrder())
-            rewind()
-        }
-
-        val pixels = IntArray(inputShape[1] * inputShape[2])
-        resizedBitmap.getPixels(pixels, 0, inputShape[2], 0, 0, inputShape[2], inputShape[1])
-
-        for (pixel in pixels) {
-            inputBuffer.put((pixel and 0xFF).toByte())
-            inputBuffer.put((pixel shr 8 and 0xFF).toByte())
-            inputBuffer.put((pixel shr 16 and 0xFF).toByte())
-        }
-
-        inputBuffer.rewind()
-        return inputBuffer
-    }
-
-    private fun imageProxyToBitmap(imageProxy: ImageProxy, rotation: Int): Bitmap {
-        val yBuffer = imageProxy.planes[0].buffer // Y
-        val uBuffer = imageProxy.planes[1].buffer // U
-        val vBuffer = imageProxy.planes[2].buffer // V
-
-        val ySize = yBuffer.remaining()
-        val uSize = uBuffer.remaining()
-        val vSize = vBuffer.remaining()
-
-        val nv21 = ByteArray(ySize + uSize + vSize)
-
-        yBuffer.get(nv21, 0, ySize)
-        vBuffer.get(nv21, ySize, vSize)
-        uBuffer.get(nv21, ySize + vSize, uSize)
-
-        val out = ByteArrayOutputStream(ySize + uSize + vSize)
-        out.use {
-            YuvImage(nv21, ImageFormat.NV21, imageProxy.width, imageProxy.height, null).compressToJpeg(
-                Rect(0, 0, imageProxy.width, imageProxy.height),
-                100,
-                it
-            )
-            val jpegData = it.toByteArray()
-            val bitmap = BitmapFactory.decodeByteArray(jpegData, 0, jpegData.size)
-
-            if (rotation != 0) {
-                val matrix = Matrix()
-                matrix.postRotate(rotation.toFloat())
-                return Bitmap.createBitmap(
-                    bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true
-                )
-            }
-
-            return bitmap
-        }
-    }
-
-    private fun inferenceAndPostProcess(inputBuffer: ByteBuffer, width: Int, height: Int) {
-        val startTime = SystemClock.uptimeMillis()
-        val outputBuffer = Array(1) {
-            Array(outputShape[1]) {
-                FloatArray(6)
-            }
-        }
-        interpreter.run(inputBuffer, outputBuffer)
-        val boundingBoxes = mutableListOf<FloatArray>()
-        for (i in 0 until outputShape[1]) {
-//            val classProb = (dequantizeFactor * outputBuffer[0][i][4] - dequantizeBias).toFloat()
-            val classProb = outputBuffer[0][i][4]
-            if (classProb >= 0.4) {
-//                val xPos =
-//                    (dequantizeFactor * outputBuffer[0][i][0] - dequantizeBias) * width
-                val xPos = outputBuffer[0][i][0] * width
-                Log.d("X Center", outputBuffer[0][i][0].toString())
-//                val yPos =
-//                    (dequantizeFactor * outputBuffer[0][i][1] - dequantizeBias) * height
-                val yPos = outputBuffer[0][i][1] * height
-                Log.d("Y Center", yPos.toString())
-//                val widthBox =
-//                    (dequantizeFactor * outputBuffer[0][i][2] - dequantizeBias) * width
-                val widthBox = outputBuffer[0][i][2] * width
-                Log.d("WIDTH BOX", widthBox.toString())
-//                val heightBox =
-//                    (dequantizeFactor * outputBuffer[0][i][3] - dequantizeBias) * height
-                val heightBox = outputBuffer[0][i][3] * height
-                Log.d("HEIGHT BOX", heightBox.toString())
-                val box = floatArrayOf(
-                        max(0f, (xPos - widthBox / 2).toFloat()),
-                        max(0f, (yPos - heightBox / 2).toFloat()),
-                        min(width.toFloat(), (xPos + widthBox / 2).toFloat()),
-                        min(height.toFloat(), (yPos + heightBox / 2).toFloat()),
-                        classProb.toFloat()
-                    )
-                Log.d("BOX", Arrays.toString(box))
-                Log.d("JEDA", "================================================================")
-//                boundingBoxes.add(box)
-            }
-        }
-
-
-//        val postProcessedBoxes = nonMaxSuppression(boundingBoxes, 0.5f)
-        finalBoundingBoxes = boundingBoxes
-//        finalBoundingBoxes = updateSort(postProcessedBoxes)
-
-
-
-        val endTime = SystemClock.uptimeMillis()
-        val inferenceTime = endTime - startTime
-        Log.d("Analyze", "Inference time Thread: $inferenceTime ms")
     }
 
     private fun updateSort(detections: List<FloatArray> = mutableListOf()): MutableList<FloatArray> {
