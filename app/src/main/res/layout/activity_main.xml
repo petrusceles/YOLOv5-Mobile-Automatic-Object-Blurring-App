@@ -27,10 +27,8 @@
         android:layout_height="match_parent" />
 
 
-
-
     <Button
-        android:id="@+id/video_capture_button"
+        android:id="@+id/capture_button"
         android:layout_width="110dp"
         android:layout_height="110dp"
         android:layout_marginBottom="48dp"
@@ -38,6 +36,19 @@
         android:text="@string/start_capture"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintHorizontal_bias="0.813"
+        app:layout_constraintStart_toStartOf="parent" />
+
+    <Button
+        android:id="@+id/record_button"
+        android:layout_width="110dp"
+        android:layout_height="110dp"
+        android:layout_marginBottom="48dp"
+        android:elevation="2dp"
+        android:text="@string/start_record"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintHorizontal_bias="0.235"
         app:layout_constraintStart_toStartOf="parent" />
 
 

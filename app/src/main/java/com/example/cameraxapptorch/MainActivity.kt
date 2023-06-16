@@ -71,6 +71,7 @@ import com.chaquo.python.PyObject
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 
 
@@ -91,10 +92,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var outputShape: IntArray
     private lateinit var outputType: DataType
     private var outputSize: Int = 0
-
+    private val dateFormat = SimpleDateFormat("yyyyMMdd_HHmmss")
     //SORT
     private var objectTrackers: MutableList<KalmanBoxTracker> = mutableListOf()
-    private val maxAge: Int = 1
+    private val maxAge: Int = 5
     private val minHits: Int = 3
     private val iouThreshold: Float = 0.3f
     private var frameCount: Int = 0
@@ -110,11 +111,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var surfaceHolder: SurfaceHolder
     private lateinit var surfaceView: SurfaceView
 
-    private val dequantizeFactor = 0.013170517981052399
-    private val dequantizeBias = 3
+    private var dequantizeFactor = 0.02953994646668434
+    private var dequantizeBias = 2
+
+    private var isCapture = false
+    private val REQUEST_CODE = 22
 
     override fun onCreate(savedInstanceState: Bundle?) {
-
         super.onCreate(savedInstanceState)
         viewBinding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(viewBinding.root)
@@ -123,9 +126,17 @@ class MainActivity : AppCompatActivity() {
         if (allPermissionsGranted()) {
             startCamera()
         } else {
+
             ActivityCompat.requestPermissions(
                 this, REQUIRED_PERMISSIONS, REQUEST_CODE_PERMISSIONS
             )
+        }
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED) {
+            // Permission is already granted, proceed with writing data
+        } else {
+            // Permission is not granted, request it
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), REQUEST_CODE)
         }
         val windowInsetsController =
             WindowCompat.getInsetsController(window, window.decorView)
@@ -133,7 +144,7 @@ class MainActivity : AppCompatActivity() {
         windowInsetsController.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         windowInsetsController.hide(WindowInsetsCompat.Type.systemBars())
-        val tfliteModel = loadModelFile(this)
+        val tfliteModel: MappedByteBuffer = Yolov5Model.getMappedByteBuffer()
         val options = Interpreter.Options()
         options.useNNAPI = true
         options.numThreads = 2
@@ -166,13 +177,13 @@ class MainActivity : AppCompatActivity() {
         val py = Python.getInstance()
         this.module = py.getModule("lsa")
 
-        viewBinding.videoCaptureButton.setOnClickListener {
-            if (isRecording) {
-                stopRecording()
-            } else {
-                startRecording()
-            }
-        }
+//        viewBinding.videoCaptureButton.setOnClickListener {
+//            if (isRecording) {
+//                stopRecording()
+//            } else {
+//                startRecording()
+//            }
+//        }
         surfaceView = viewBinding.surfaceView
         surfaceHolder = surfaceView.holder
         surfaceHolder.addCallback(object : SurfaceHolder.Callback {
@@ -191,7 +202,17 @@ class MainActivity : AppCompatActivity() {
             override fun surfaceDestroyed(holder: SurfaceHolder) {
             }
         })
+        dequantizeFactor = Yolov5Model.getDequantizeFactor()
+        dequantizeBias = Yolov5Model.getDequantizeBias()
 
+        viewBinding.captureButton.setOnClickListener {
+            isCapture = !isCapture
+            if (isCapture) {
+                viewBinding.captureButton.text = "Stop Capture"
+            } else {
+                viewBinding.captureButton.text = "Start Capture"
+            }
+        }
     }
 
 
@@ -278,7 +299,7 @@ class MainActivity : AppCompatActivity() {
             isRecording = true
 
 
-            viewBinding.videoCaptureButton.text = "Stop Recording"
+//            viewBinding.videoCaptureButton.text = "Stop Recording"
         } catch (e: IOException) {
             // Handle any errors
             e.printStackTrace()
@@ -297,7 +318,7 @@ class MainActivity : AppCompatActivity() {
 
             mediaRecorder.release()
             isRecording = false
-            viewBinding.videoCaptureButton.text = "Start Recording"
+//            viewBinding.videoCaptureButton.text = "Start Recording"
             Toast.makeText(this, "Recording saved", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
             // Handle any errors
@@ -448,7 +469,43 @@ class MainActivity : AppCompatActivity() {
         imageProxy.close()
     }
 
+    private fun saveBoundingBoxes(file: File, boundingBoxes: List<FloatArray>, imageWidth: Int, imageHeight: Int) {
+        try {
+            val fileOutputStream = FileOutputStream(file)
+            for (box in boundingBoxes) {
+                val x1 = box[0]
+                val y1 = box[1]
+                val x2 = box[2]
+                val y2 = box[3]
+
+                val center_x = ((x1 + x2) / 2)/imageWidth
+                val center_y = ((y1 + y2) / 2)/imageHeight
+                val width = (x2 - x1)/imageWidth
+                val height = (y2 - y1)/imageHeight
+
+
+
+                val boundingBoxText = "0 $center_x $center_y $width $height\n"
+                fileOutputStream.write(boundingBoxText.toByteArray())
+            }
+            fileOutputStream.close()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error saving bounding box data: ${e.message}")
+        }
+    }
+
+    private fun saveImage(file: File, bitmap: Bitmap) {
+        try {
+            val fileOutputStream = FileOutputStream(file)
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 100, fileOutputStream)
+            fileOutputStream.close()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error saving image data: ${e.message}")
+        }
+    }
+
     private fun drawRectangleAndShow(bitmap: Bitmap) {
+//        Log.d("GRANTED", isGranted.toString())
         val mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true)
 
         val canvas = Canvas(mutableBitmap)
@@ -490,9 +547,19 @@ class MainActivity : AppCompatActivity() {
             // Draw the blurred region onto the canvas
             canvas.drawBitmap(blurredRegion, left.toFloat(), top.toFloat(), blurPaint)
         }
-            finalBitmap = mutableBitmap
+        finalBitmap = mutableBitmap
 
-            viewBinding.viewImage.setImageBitmap(finalBitmap)
+        viewBinding.viewImage.setImageBitmap(finalBitmap)
+        Log.d("BITMAP HEIGHT", bitmap.height.toString())
+        Log.d("BITMAP WIDTH", bitmap.width.toString())
+        if (isCapture) {
+            val currentTime = dateFormat.format(Date()).replace(":", ".")
+            val outputTxtFile = File(getExternalFilesDir(null),"$currentTime.txt")
+            val outputPngFile = File(getExternalFilesDir(null),"$currentTime.jpg")
+            saveBoundingBoxes(outputTxtFile, finalBoundingBoxes, bitmap.width, bitmap.height) // Save bounding box data
+            saveImage(outputPngFile, bitmap) // Save image data
+        }
+
     }
 
     private fun createInputBuffer(resizedBitmap: Bitmap): ByteBuffer {
@@ -570,7 +637,7 @@ class MainActivity : AppCompatActivity() {
             val classProb = (dequantizeFactor * (outputBuffer[0][i][5] - dequantizeBias)).toFloat()
             val confScore = classProb * objScore
 //            val classProb = outputBuffer[0][i][4]
-            if (objScore > 0.20f) {
+            if (objScore > 0.5f) {
 //                Log.d("Class PROB", classProb.toString())
                 val xPos =
                     (dequantizeFactor * (outputBuffer[0][i][0] - dequantizeBias)) * width
@@ -602,7 +669,7 @@ class MainActivity : AppCompatActivity() {
         }
 
 
-        val postProcessedBoxes = nonMaxSuppression(boundingBoxes, 0.45f)
+        val postProcessedBoxes = nonMaxSuppression(boundingBoxes, 0.1f)
 //        finalBoundingBoxes = postProcessedBoxes
         finalBoundingBoxes = updateSort(postProcessedBoxes)
 
@@ -874,7 +941,7 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun loadModelFile(context: Context): MappedByteBuffer {
-        val fileDescriptor = context.assets.openFd("best-200e-yolov5n-416-int8.tflite")
+        val fileDescriptor = context.assets.openFd("best-50e-yolov5n6-448-int8.tflite")
         val inputStream = FileInputStream(fileDescriptor.fileDescriptor)
         val fileChannel = inputStream.channel
         val startOffset = fileDescriptor.startOffset
