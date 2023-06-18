@@ -342,8 +342,6 @@ class MainActivity : AppCompatActivity() {
                 .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
                 .build()
 
-//            imageAnalyzer.sett
-
             imageAnalyzer.setAnalyzer(
                 ContextCompat.getMainExecutor(this)
             ) { image: ImageProxy -> analyzer(image) }
@@ -449,9 +447,6 @@ class MainActivity : AppCompatActivity() {
 
         val inputBuffer = createInputBuffer(scaledBitmap)
 
-//        Log.d("BITMAP INFO", "Width : ${resizedBitmap.width} Height : ${resizedBitmap.height}")
-//        Log.d("SCREEN INFO", "Width : ${viewBinding.viewImage.width} Height : ${viewBinding.viewImage.height}")
-
 
         executor.execute {
             inferenceAndPostProcess(inputBuffer, resizedBitmap.width, resizedBitmap.height)
@@ -554,8 +549,10 @@ class MainActivity : AppCompatActivity() {
         Log.d("BITMAP WIDTH", bitmap.width.toString())
         if (isCapture) {
             val currentTime = dateFormat.format(Date()).replace(":", ".")
-            val outputTxtFile = File(getExternalFilesDir(null),"$currentTime.txt")
-            val outputPngFile = File(getExternalFilesDir(null),"$currentTime.jpg")
+            val folder = File(getExternalFilesDir(null), "${Yolov5Model.getFolderMain()}-${Yolov5Model.getFolderPrefix()}")
+            folder.mkdirs()
+            val outputTxtFile = File(folder,"$currentTime.txt")
+            val outputPngFile = File(folder,"$currentTime.jpg")
             saveBoundingBoxes(outputTxtFile, finalBoundingBoxes, bitmap.width, bitmap.height) // Save bounding box data
             saveImage(outputPngFile, bitmap) // Save image data
         }
@@ -637,7 +634,7 @@ class MainActivity : AppCompatActivity() {
             val classProb = (dequantizeFactor * (outputBuffer[0][i][5] - dequantizeBias)).toFloat()
             val confScore = classProb * objScore
 //            val classProb = outputBuffer[0][i][4]
-            if (objScore > 0.5f) {
+            if (objScore > 0.2f) {
 //                Log.d("Class PROB", classProb.toString())
                 val xPos =
                     (dequantizeFactor * (outputBuffer[0][i][0] - dequantizeBias)) * width
@@ -671,7 +668,13 @@ class MainActivity : AppCompatActivity() {
 
         val postProcessedBoxes = nonMaxSuppression(boundingBoxes, 0.1f)
 //        finalBoundingBoxes = postProcessedBoxes
-        finalBoundingBoxes = updateSort(postProcessedBoxes)
+        if (Yolov5Model.getIsTracking()) {
+            Log.d("TRACKING", "TRUE")
+            finalBoundingBoxes = updateSort(postProcessedBoxes)
+        } else {
+            Log.d("TRACKING", "FALSE")
+            finalBoundingBoxes = postProcessedBoxes
+        }
 
 
 

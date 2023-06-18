@@ -17,14 +17,16 @@ import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.ContentResolver
+import android.database.Cursor
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.util.Log
+import androidx.core.widget.addTextChangedListener
+import androidx.core.widget.doOnTextChanged
 import com.example.cameraxapptorch.databinding.ActivityMainBinding
-const val PICK_PDF_FILE = 2
 class MenuActivity : ComponentActivity() {
     private lateinit var viewBinding: ActivityMenuBinding
-    private val PICK_TFLITE_FILE_REQUEST = "pickTfliteFileRequest"
     private var fileExtension = ""
     lateinit var tfliteModel: MappedByteBuffer
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -63,14 +65,49 @@ class MenuActivity : ComponentActivity() {
                 Log.d("DEQUANTIZE FACTOR", dequantizeFactor.toString())
             }
         }
+
+        viewBinding.folderPrefixText.doOnTextChanged { text, _, _, _ ->
+            Yolov5Model.setFolderPrefix(text.toString())
+        }
+
+        viewBinding.trackingCheck.setOnCheckedChangeListener { buttonView, isChecked ->
+            Yolov5Model.setIsTracking(isChecked)
+        }
     }
 
+    private fun getFilenameWithoutExtensionFromUri(uri: Uri): String? {
+        var filenameWithoutExtension: String? = null
+
+        val contentResolver: ContentResolver = applicationContext.contentResolver
+        val cursor: Cursor? = contentResolver.query(uri, null, null, null, null)
+        cursor?.use {
+            if (it.moveToFirst()) {
+                val displayNameIndex: Int = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (displayNameIndex != -1) {
+                    val displayName: String = it.getString(displayNameIndex)
+                    val dotIndex: Int = displayName.lastIndexOf(".")
+                    if (dotIndex != -1) {
+                        filenameWithoutExtension = displayName.substring(0, dotIndex)
+                    }
+                }
+            }
+        }
+
+        return filenameWithoutExtension
+    }
+
+    @Suppress("DEPRECATION")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (resultCode ==Activity.RESULT_OK && requestCode==0) {
             val selectedFileUri: Uri? = data?.data
             if (selectedFileUri != null) {
                 fileExtension = getFileName(selectedFileUri)!!
+                getFilenameWithoutExtensionFromUri(selectedFileUri)?.let {
+                    Yolov5Model.setFolderMain(
+                        it
+                    )
+                }
                 val fileDescriptor = contentResolver.openFileDescriptor(selectedFileUri, "r")
                 if (fileDescriptor != null) {
                     val fileInputStream = FileInputStream(fileDescriptor.fileDescriptor)

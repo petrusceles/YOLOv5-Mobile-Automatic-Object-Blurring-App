@@ -19,40 +19,51 @@
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintVertical_bias="0.647" />
 
+
     <EditText
         android:id="@+id/dequantizeFactorText"
         android:layout_width="337dp"
         android:layout_height="49dp"
-        android:layout_marginTop="212dp"
-        android:layout_marginBottom="26dp"
-        android:hint="DequantizeFactor"
+        android:hint="Dequantize Factor"
         app:layout_constraintBottom_toTopOf="@+id/dequantizeBiasText"
         app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintHorizontal_bias="0.527"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
+        app:layout_constraintTop_toBottomOf="@+id/trackingCheck"
+        app:layout_constraintVertical_bias="0.523" />
+
+    <CheckBox
+        android:id="@+id/trackingCheck"
+        android:layout_width="327dp"
+        android:layout_height="46dp"
+        android:layout_marginTop="28dp"
+        android:text="tracking"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/message_text" />
 
     <EditText
         android:id="@+id/dequantizeBiasText"
         android:layout_width="332dp"
         android:layout_height="42dp"
-        android:layout_marginBottom="124dp"
-        android:hint="DequantizeBias"
-        app:layout_constraintBottom_toTopOf="@+id/chooseFileButton"
+        android:hint="Dequantize Bias"
+        app:layout_constraintBottom_toTopOf="@+id/dequantizeValueSetButton"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintHorizontal_bias="0.493"
-        app:layout_constraintStart_toStartOf="parent" />
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/message_text"
+        app:layout_constraintVertical_bias="0.856" />
 
     <com.google.android.material.button.MaterialButton
+        android:id="@+id/dequantizeValueSetButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:layout_marginBottom="32dp"
         android:text="SET DEQUANTIZE VALUE"
         app:layout_constraintBottom_toTopOf="@+id/chooseFileButton"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintHorizontal_bias="0.497"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/dequantizeBiasText"
-        app:layout_constraintVertical_bias="0.577"
-        android:id="@+id/dequantizeValueSetButton"/>
+        app:layout_constraintStart_toStartOf="parent" />
 
     <TextView
         android:id="@+id/message_text"
@@ -75,8 +86,18 @@
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintHorizontal_bias="0.498"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/chooseFileButton"
-        app:layout_constraintVertical_bias="0.142" />
+        app:layout_constraintTop_toBottomOf="@+id/folderPrefixText"
+        app:layout_constraintVertical_bias="0.285" />
+
+    <EditText
+        android:id="@+id/folderPrefixText"
+        android:layout_width="340dp"
+        android:layout_height="47dp"
+        android:layout_marginTop="32dp"
+        android:hint="Testing Folder Prefix"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/chooseFileButton" />
 
 
 </androidx.constraintlayout.widget.ConstraintLayout>
