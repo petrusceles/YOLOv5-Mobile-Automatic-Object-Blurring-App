@@ -2,7 +2,6 @@ package com.example.cameraxapptorch
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.*
@@ -12,26 +11,19 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.SystemClock
-import android.provider.MediaStore
 import android.util.Log
 import android.view.SurfaceHolder
 import android.view.SurfaceView
-import android.view.View
-import android.view.Window
-import android.view.WindowManager
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.camera2.interop.Camera2CameraInfo
-import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.*
 import androidx.camera.core.CameraSelector.LENS_FACING_BACK
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.*
-import androidx.camera.video.VideoCapture
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.core.content.PermissionChecker
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -39,19 +31,20 @@ import androidx.renderscript.Allocation
 import androidx.renderscript.Element
 import androidx.renderscript.RenderScript
 import androidx.renderscript.ScriptIntrinsicBlur
+import com.chaquo.python.PyObject
+import com.chaquo.python.Python
+import com.chaquo.python.android.AndroidPlatform
 import com.example.cameraxapptorch.databinding.ActivityMainBinding
-import org.apache.commons.math3.linear.Array2DRowRealMatrix
-import org.apache.commons.math3.linear.ArrayRealVector
-import org.apache.commons.math3.linear.MatrixUtils
-import org.apache.commons.math3.linear.RealMatrix
+import org.apache.commons.math3.linear.*
 import org.apache.commons.math3.optim.linear.*
-import org.apache.commons.math3.optim.nonlinear.scalar.GoalType
-import org.apache.commons.math3.optim.nonlinear.scalar.ObjectiveFunction
 import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.Tensor
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.MappedByteBuffer
@@ -62,17 +55,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlin.math.max
 import kotlin.math.min
-import org.apache.commons.math3.optim.linear.*
-import org.apache.commons.math3.linear.*
-import org.apache.commons.math3.optimization.linear.SimplexSolver
-import org.apache.commons.math3.optimization.linear.UnboundedSolutionException
-import com.chaquo.python.PyException
-import com.chaquo.python.PyObject
-import com.chaquo.python.Python
-import com.chaquo.python.android.AndroidPlatform
-import java.io.File
-import java.io.FileOutputStream
-import java.io.IOException
+import kotlin.math.roundToInt
 
 
 class MainActivity : AppCompatActivity() {
@@ -117,6 +100,19 @@ class MainActivity : AppCompatActivity() {
     private var isCapture = false
     private val REQUEST_CODE = 22
 
+    private var inp_scale: Float = 0.0f
+    private var inp_zero_point: Int = 0
+    private var oup_scale: Float = 0.0f
+    private var oup_zero_point: Int = 0
+
+    private val IMAGE_MEAN = 0f
+
+    private val IMAGE_STD = 255.0f
+
+    private var outputBox: Int = 0
+
+    private lateinit var inputBuffer: ByteBuffer
+    private lateinit var outputBuffer: ByteBuffer
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         viewBinding = ActivityMainBinding.inflate(layoutInflater)
@@ -151,6 +147,9 @@ class MainActivity : AppCompatActivity() {
         interpreter = Interpreter(tfliteModel, options)
 
         inputTensor = interpreter.getInputTensor(0)
+        inp_scale = inputTensor.quantizationParams().scale;
+        inp_zero_point = inputTensor.quantizationParams().zeroPoint;
+
         inputShape = inputTensor.shape()  // [batch_size, height, width, channels]
         inputType = inputTensor.dataType()
 
@@ -158,13 +157,29 @@ class MainActivity : AppCompatActivity() {
 
 
         outputTensor = interpreter.getOutputTensor(0)
+        oup_scale = outputTensor.quantizationParams().scale;
+        oup_zero_point = outputTensor.quantizationParams().zeroPoint;
+
         outputShape = outputTensor.shape()  // [batch_size, height, width, channels]
         outputType = outputTensor.dataType()
 
         outputSize = outputShape[0] * outputShape[1] * outputShape[2]  // height * width * channels
         interpreter = Interpreter(tfliteModel, options)
+        outputBox = ((Math.pow(((inputShape[1] / 32).toDouble()), 2.0) + Math.pow(((inputShape[1] / 16).toDouble()), 2.0) + Math.pow(((inputShape[1] / 8).toDouble()),
+            2.0
+        )) * 3).roundToInt();
 
 
+        inputBuffer = ByteBuffer.allocateDirect(inputSize * inputType.byteSize() ).apply {
+            order(ByteOrder.nativeOrder())
+            rewind()
+        }
+
+        outputBuffer = ByteBuffer.allocateDirect(outputBox*6).apply {
+            order(ByteOrder.nativeOrder())
+            rewind()
+        }
+        Log.d("MASUK", outputBox.toString())
         // Set up the listeners for take photo and video capture buttons
 //        viewBinding.imageCaptureButton.setOnClickListener { takePhoto() }
 
@@ -444,20 +459,21 @@ class MainActivity : AppCompatActivity() {
         val scaledBitmap = Bitmap.createScaledBitmap(
             resizedBitmap, inputShape[2], inputShape[2], false
         )
-
+        Log.d("OUTBOX", outputBox.toString())
         val inputBuffer = createInputBuffer(scaledBitmap)
 
 
-        executor.execute {
-            inferenceAndPostProcess(inputBuffer, resizedBitmap.width, resizedBitmap.height)
-        }
 
+//        executor.execute {
+//            inferenceAndPostProcess(inputBuffer, resizedBitmap.width, resizedBitmap.height)
+//        }
+//
+//        for (box in finalBoundingBoxes) {
+//            Log.d("BOX", box.contentToString())
+//        }
         val startTime = SystemClock.uptimeMillis()
-        drawRectangleAndShow(resizedBitmap)
+//        drawRectangleAndShow(resizedBitmap)
 //        drawBitmapOnSurface()
-        for (box in finalBoundingBoxes) {
-            Log.d("BOX", box.contentToString())
-        }
 //        viewBinding.viewImage.setImageBitmap(resizedBitmap)
         val timeSpent = (SystemClock.uptimeMillis() - startTime).toInt()
         Log.d("TIME SPENT", "$timeSpent ms")
@@ -561,21 +577,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun createInputBuffer(resizedBitmap: Bitmap): ByteBuffer {
 //        Log.d("TYPE", inputType)
-        val inputBuffer = ByteBuffer.allocateDirect(inputSize * inputType.byteSize() ).apply {
-            order(ByteOrder.nativeOrder())
-            rewind()
-        }
-
         val pixels = IntArray(inputShape[1] * inputShape[2])
         resizedBitmap.getPixels(pixels, 0, inputShape[2], 0, 0, inputShape[2], inputShape[1])
-
+        inputBuffer.rewind()
         for (pixel in pixels) {
-            inputBuffer.put((pixel and 0xFF).toByte())
-            inputBuffer.put((pixel shr 8 and 0xFF).toByte())
-            inputBuffer.put((pixel shr 16 and 0xFF).toByte())
+            inputBuffer.put((((pixel shr 16 and 0xFF) - IMAGE_MEAN) / IMAGE_STD / inp_scale + inp_zero_point) as Byte)
+            inputBuffer.put((((pixel shr 8 and 0xFF) - IMAGE_MEAN) / IMAGE_STD / inp_scale + inp_zero_point) as Byte)
+            inputBuffer.put((((pixel and 0xFF) - IMAGE_MEAN) / IMAGE_STD / inp_scale + inp_zero_point) as Byte)
         }
 
-        inputBuffer.rewind()
         return inputBuffer
     }
 
@@ -620,61 +630,87 @@ class MainActivity : AppCompatActivity() {
 
     private fun inferenceAndPostProcess(inputBuffer: ByteBuffer, width: Int, height: Int) {
         val startTime = SystemClock.uptimeMillis()
-        val outputBuffer = Array(1) {
-            Array(outputShape[1]) {
-                ByteArray(6)
-            }
-        }
-        interpreter.run(inputBuffer, outputBuffer)
-        val boundingBoxes = mutableListOf<FloatArray>()
+        var outputMap: MutableMap<Int, Any> = HashMap()
 
-        for (i in 0 until outputShape[1]) {
-            val quantizedValue = outputBuffer[0][i][4]
-            val objScore = (dequantizeFactor * (outputBuffer[0][i][4] - dequantizeBias)).toFloat()
-            val classProb = (dequantizeFactor * (outputBuffer[0][i][5] - dequantizeBias)).toFloat()
-            val confScore = classProb * objScore
-//            val classProb = outputBuffer[0][i][4]
-            if (objScore > 0.2f) {
-//                Log.d("Class PROB", classProb.toString())
-                val xPos =
-                    (dequantizeFactor * (outputBuffer[0][i][0] - dequantizeBias)) * width
-//                val xPos = outputBuffer[0][i][0] * width
-//                Log.d("X Center", xPos.toString())
-                val yPos =
-                    (dequantizeFactor * (outputBuffer[0][i][1] - dequantizeBias)) * height
-//                val yPos = outputBuffer[0][i][1] * height
-//                Log.d("Y Center", yPos.toString())
-                val widthBox =
-                    (dequantizeFactor * (outputBuffer[0][i][2] - dequantizeBias)) * width
-//                val widthBox = outputBuffer[0][i][2] * width
-//                Log.d("WIDTH BOX", widthBox.toString())
-                val heightBox =
-                    (dequantizeFactor * (outputBuffer[0][i][3] - dequantizeBias)) * height
-//                val heightBox = outputBuffer[0][i][3] * height
-//                Log.d("HEIGHT BOX", heightBox.toString())
-                val box = floatArrayOf(
-                    max(0f, (xPos - widthBox / 2).toFloat()),
-                    max(0f, (yPos - heightBox / 2).toFloat()),
-                    min(width.toFloat(), (xPos + widthBox / 2).toFloat()),
-                    min(height.toFloat(), (yPos + heightBox / 2).toFloat()),
-                    objScore
-                )
-//                Log.d("BOX", Arrays.toString(box))
-//                Log.d("JEDA", "================================================================")
-                boundingBoxes.add(box)
+        outputBuffer.rewind()
+        outputMap.put(0, outputBuffer)
+        val inputArray = arrayOf<Any>(inputBuffer)
+        interpreter.runForMultipleInputsOutputs(inputArray, outputMap)
+        val byteBuffer = outputMap[0] as ByteBuffer?
+        byteBuffer!!.rewind()
+
+        val out = Array<FloatArray>(outputBox) {
+            FloatArray(6)
+        }
+
+        for (i in 0 until outputBox) {
+            for (j in 0 until 6) {
+                out[i][j] = oup_scale * ((byteBuffer.get().toInt() and 0xFF) - oup_zero_point)
             }
         }
 
+//        for (i in 0 until outputBox) {
+//
+//        }
 
-        val postProcessedBoxes = nonMaxSuppression(boundingBoxes, 0.1f)
-//        finalBoundingBoxes = postProcessedBoxes
-        if (Yolov5Model.getIsTracking()) {
-            Log.d("TRACKING", "TRUE")
-            finalBoundingBoxes = updateSort(postProcessedBoxes)
-        } else {
-            Log.d("TRACKING", "FALSE")
-            finalBoundingBoxes = postProcessedBoxes
-        }
+//        val outputBuffer = Array(1) {
+//            Array(outputShape[1]) {
+//                ByteArray(6)
+//            }
+//        }
+//        interpreter.run(inputBuffer, outputBuffer)
+//        val boundingBoxes = mutableListOf<FloatArray>()
+//
+//        for (i in 0 until outputShape[1]) {
+//            val quantizedValue = outputBuffer[0][i][4]
+//            val objScore = (dequantizeFactor * (outputBuffer[0][i][4] - dequantizeBias)).toFloat()
+//            val classProb = (dequantizeFactor * (outputBuffer[0][i][5] - dequantizeBias)).toFloat()
+//            val confScore = classProb * objScore
+////            val classProb = outputBuffer[0][i][4]
+//            if (objScore >= 0.649f) {
+////                Log.d("Class PROB", classProb.toString())
+//                val xPos =
+//                    (dequantizeFactor * (outputBuffer[0][i][0] - dequantizeBias)) * width
+////                val xPos = outputBuffer[0][i][0] * width
+////                Log.d("X Center", xPos.toString())
+//                val yPos =
+//                    (dequantizeFactor * (outputBuffer[0][i][1] - dequantizeBias)) * height
+////                val yPos = outputBuffer[0][i][1] * height
+////                Log.d("Y Center", yPos.toString())
+//                val widthBox =
+//                    (dequantizeFactor * (outputBuffer[0][i][2] - dequantizeBias)) * width
+////                val widthBox = outputBuffer[0][i][2] * width
+////                Log.d("WIDTH BOX", widthBox.toString())
+//                val heightBox =
+//                    (dequantizeFactor * (outputBuffer[0][i][3] - dequantizeBias)) * height
+////                val heightBox = outputBuffer[0][i][3] * height
+////                Log.d("HEIGHT BOX", heightBox.toString())
+//                val box = floatArrayOf(
+//                    max(0f, (xPos - widthBox / 2).toFloat()),
+//                    max(0f, (yPos - heightBox / 2).toFloat()),
+//                    min(width.toFloat(), (xPos + widthBox / 2).toFloat()),
+//                    min(height.toFloat(), (yPos + heightBox / 2).toFloat()),
+//                    objScore
+//                )
+//
+////                val isGreaterThanZero = box.all { it > 0.0f }
+////                if (isGreaterThanZero && box[0] <= )
+////                Log.d("BOX", Arrays.toString(box))
+////                Log.d("JEDA", "================================================================")
+//                boundingBoxes.add(box)
+//            }
+//        }
+
+
+//        val postProcessedBoxes = nonMaxSuppression(boundingBoxes, 0.5f)
+////        finalBoundingBoxes = postProcessedBoxes
+//        if (Yolov5Model.getIsTracking()) {
+//            Log.d("TRACKING", "TRUE")
+//            finalBoundingBoxes = updateSort(postProcessedBoxes)
+//        } else {
+//            Log.d("TRACKING", "FALSE")
+//            finalBoundingBoxes = postProcessedBoxes
+//        }
 
 
 
@@ -710,6 +746,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+
         val associations = associateDetectionsToTrackers(detections, tracks, 0.3f)
 
         associations.first.forEach {
@@ -721,8 +758,9 @@ class MainActivity : AppCompatActivity() {
             this.objectTrackers.add(tracker)
         }
 
+
         val returnedBBox = mutableListOf<FloatArray>()
-        Log.d("TRACKER LENGTH", this.objectTrackers.size.toString())
+//        Log.d("TRACKER LENGTH", this.objectTrackers.size.toString())
         var i = this.objectTrackers.size
         for (tracker in this.objectTrackers.reversed()) {
             val bbox = tracker.getState()
@@ -736,7 +774,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        Log.d("TRACKER LENGTH AFTER", this.objectTrackers.size.toString())
+//        Log.d("TRACKER LENGTH AFTER", this.objectTrackers.size.toString())
 
         return returnedBBox
     }
@@ -795,19 +833,19 @@ class MainActivity : AppCompatActivity() {
 //            Log.d("unmatchedDetections", unmatchedDetections.toString())
             return Triple(mutableListOf(), unmatchedDetections, mutableListOf())
         }
-        for (tracker in trackers){
-            Log.d("TRACKER", tracker.contentToString())
-        }
-        for (detection in detections){
-            Log.d("DETECTIONS", detection.contentToString())
-        }
+//        for (tracker in trackers){
+//            Log.d("TRACKER", tracker.contentToString())
+//        }
+//        for (detection in detections){
+//            Log.d("DETECTIONS", detection.contentToString())
+//        }
 
         val iouMatrix = computeIoUMatrix(detections, trackers)
 //        Log.d()
 //        iouMatrix.contentToString()
-        for (iou in iouMatrix) {
-            Log.d("IouMAT", iou.contentToString())
-        }
+//        for (iou in iouMatrix) {
+//            Log.d("IouMAT", iou.contentToString())
+//        }
 
         val allEmpty = iouMatrix.any { it.isEmpty() }
 
@@ -843,10 +881,10 @@ class MainActivity : AppCompatActivity() {
 //            Log.d("MAXROWANDCOLUMNSUM", a.toString())
 
             if (a.first == 1 && a.second == 1) {
-                Log.d("SINI1", "------1------")
+//                Log.d("SINI1", "------1------")
                 matchedIndices = findOnes(thresholdMatrix)
             } else {
-                Log.d("SINI2", "------2------")
+//                Log.d("SINI2", "------2------")
 //                matchedIndices = hungarianAlgorithm(iouMatrix)
                 val result = module.callAttr("lsa", iouMatrix).toString()
                 matchedIndices = convertStringToList(result)
@@ -877,12 +915,12 @@ class MainActivity : AppCompatActivity() {
         }
 
 
-        for (unmatchDet in unmatchedDetections) {
-            Log.d("UNMATCH DET", unmatchDet.toString())
-        }
-        for (unmatchTrack in unmatchedTrackers) {
-            Log.d("UNMATCH TRACKQ", unmatchTrack.toString())
-        }
+//        for (unmatchDet in unmatchedDetections) {
+//            Log.d("UNMATCH DET", unmatchDet.toString())
+//        }
+//        for (unmatchTrack in unmatchedTrackers) {
+//            Log.d("UNMATCH TRACKQ", unmatchTrack.toString())
+//        }
 
         val matches = mutableListOf<IntArray>()
 
