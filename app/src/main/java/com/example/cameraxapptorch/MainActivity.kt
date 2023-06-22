@@ -58,6 +58,8 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 
+private val IMAGE_MEAN = 0f
+private val IMAGE_STD = 255.0f
 class MainActivity : AppCompatActivity() {
     private lateinit var viewBinding: ActivityMainBinding
     private var imageCapture: ImageCapture? = null
@@ -75,39 +77,28 @@ class MainActivity : AppCompatActivity() {
     private lateinit var outputShape: IntArray
     private lateinit var outputType: DataType
     private var outputSize: Int = 0
+    @SuppressLint("SimpleDateFormat")
     private val dateFormat = SimpleDateFormat("yyyyMMdd_HHmmss")
-    //SORT
+
     private var objectTrackers: MutableList<KalmanBoxTracker> = mutableListOf()
     private val maxAge: Int = 5
-    private val minHits: Int = 3
-    private val iouThreshold: Float = 0.3f
     private var frameCount: Int = 0
     private lateinit var module: PyObject
 
     private var finalBoundingBoxes: MutableList<FloatArray> = mutableListOf()
-
-    private var isRecording = false
-    private lateinit var mediaRecorder: MediaRecorder
+    private var untrackedBoundingBoxes: MutableList<FloatArray> = mutableListOf()
 
     private var finalBitmap: Bitmap? = null
-
-    private lateinit var surfaceHolder: SurfaceHolder
-    private lateinit var surfaceView: SurfaceView
-
-    private var dequantizeFactor = 0.02953994646668434
-    private var dequantizeBias = 2
 
     private var isCapture = false
     private val REQUEST_CODE = 22
 
-    private var inp_scale: Float = 0.0f
-    private var inp_zero_point: Int = 0
-    private var oup_scale: Float = 0.0f
-    private var oup_zero_point: Int = 0
+    private var inputScale: Float = 0.0f
+    private var inputZeroPoint: Int = 0
+    private var outputScale: Float = 0.0f
+    private var outputZeroPoint: Int = 0
 
-    private val IMAGE_MEAN = 0f
-
-    private val IMAGE_STD = 255.0f
+    private var counter: Int = 0
 
     private var outputBox: Int = 0
 
@@ -129,16 +120,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED) {
-            // Permission is already granted, proceed with writing data
         } else {
-            // Permission is not granted, request it
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), REQUEST_CODE)
         }
         val windowInsetsController =
             WindowCompat.getInsetsController(window, window.decorView)
-        // Configure the behavior of the hidden system bars.
         windowInsetsController.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+
         windowInsetsController.hide(WindowInsetsCompat.Type.systemBars())
         val tfliteModel: MappedByteBuffer = Yolov5Model.getMappedByteBuffer()
         val options = Interpreter.Options()
@@ -147,8 +136,9 @@ class MainActivity : AppCompatActivity() {
         interpreter = Interpreter(tfliteModel, options)
 
         inputTensor = interpreter.getInputTensor(0)
-        inp_scale = inputTensor.quantizationParams().scale;
-        inp_zero_point = inputTensor.quantizationParams().zeroPoint;
+
+        inputScale = inputTensor.quantizationParams().scale;
+        inputZeroPoint = inputTensor.quantizationParams().zeroPoint;
 
         inputShape = inputTensor.shape()  // [batch_size, height, width, channels]
         inputType = inputTensor.dataType()
@@ -157,18 +147,15 @@ class MainActivity : AppCompatActivity() {
 
 
         outputTensor = interpreter.getOutputTensor(0)
-        oup_scale = outputTensor.quantizationParams().scale;
-        oup_zero_point = outputTensor.quantizationParams().zeroPoint;
+        outputScale = outputTensor.quantizationParams().scale;
+        outputZeroPoint = outputTensor.quantizationParams().zeroPoint;
 
         outputShape = outputTensor.shape()  // [batch_size, height, width, channels]
         outputType = outputTensor.dataType()
 
         outputSize = outputShape[0] * outputShape[1] * outputShape[2]  // height * width * channels
         interpreter = Interpreter(tfliteModel, options)
-        outputBox = ((Math.pow(((inputShape[1] / 32).toDouble()), 2.0) + Math.pow(((inputShape[1] / 16).toDouble()), 2.0) + Math.pow(((inputShape[1] / 8).toDouble()),
-            2.0
-        )) * 3).roundToInt();
-
+        outputBox = outputShape[1]
 
         inputBuffer = ByteBuffer.allocateDirect(inputSize * inputType.byteSize() ).apply {
             order(ByteOrder.nativeOrder())
@@ -179,9 +166,6 @@ class MainActivity : AppCompatActivity() {
             order(ByteOrder.nativeOrder())
             rewind()
         }
-        Log.d("MASUK", outputBox.toString())
-        // Set up the listeners for take photo and video capture buttons
-//        viewBinding.imageCaptureButton.setOnClickListener { takePhoto() }
 
         cameraExecutor = Executors.newSingleThreadExecutor()
 
@@ -192,34 +176,6 @@ class MainActivity : AppCompatActivity() {
         val py = Python.getInstance()
         this.module = py.getModule("lsa")
 
-//        viewBinding.videoCaptureButton.setOnClickListener {
-//            if (isRecording) {
-//                stopRecording()
-//            } else {
-//                startRecording()
-//            }
-//        }
-        surfaceView = viewBinding.surfaceView
-        surfaceHolder = surfaceView.holder
-        surfaceHolder.addCallback(object : SurfaceHolder.Callback {
-            override fun surfaceCreated(holder: SurfaceHolder) {
-                // Surface created, you can now draw on it
-                // Display your bitmap here
-                drawBitmapOnSurface()
-            }
-
-            override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-                // Surface destroyed, clean up resources
-                // Surface size or format
-                drawBitmapOnSurface()
-            }
-
-            override fun surfaceDestroyed(holder: SurfaceHolder) {
-            }
-        })
-        dequantizeFactor = Yolov5Model.getDequantizeFactor()
-        dequantizeBias = Yolov5Model.getDequantizeBias()
-
         viewBinding.captureButton.setOnClickListener {
             isCapture = !isCapture
             if (isCapture) {
@@ -227,118 +183,6 @@ class MainActivity : AppCompatActivity() {
             } else {
                 viewBinding.captureButton.text = "Start Capture"
             }
-        }
-    }
-
-
-    private fun drawBitmapOnSurface() {
-        val canvas = surfaceHolder.lockCanvas()
-        try {
-            if (canvas != null) {
-                // Clear the canvas
-                canvas.drawColor(Color.BLACK)
-
-                // Calculate the scaling factors for the bitmap to fit the screen
-                val surfaceWidth = surfaceView.width.toFloat()
-                val surfaceHeight = surfaceView.height.toFloat()
-                val bitmapWidth = finalBitmap?.width ?: 0
-                val bitmapHeight = finalBitmap?.height ?: 0
-
-                val scaleX = surfaceWidth / bitmapWidth
-                val scaleY = surfaceHeight / bitmapHeight
-                val scale = scaleX.coerceAtMost(scaleY)
-
-                // Calculate the scaled dimensions of the bitmap
-                val scaledWidth = (bitmapWidth * scale).toInt()
-                val scaledHeight = (bitmapHeight * scale).toInt()
-
-                // Calculate the destination rectangle for the scaled bitmap
-                val destLeft = (surfaceWidth - scaledWidth) / 2
-                val destTop = (surfaceHeight - scaledHeight) / 2
-                val destRight = destLeft + scaledWidth
-                val destBottom = destTop + scaledHeight
-                val destRect = Rect(destLeft.toInt(), destTop.toInt(), destRight.toInt(), destBottom.toInt())
-
-                // Draw the scaled bitmap on the canvas
-                finalBitmap?.let {
-                    canvas.drawBitmap(it, null, destRect, Paint())
-                }
-            }
-        } finally {
-            surfaceHolder.unlockCanvasAndPost(canvas)
-        }
-    }
-
-
-    private fun getOutputFilePath(): String {
-        val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-
-        // Create a file name with the current timestamp
-        val fileName = "video_$timeStamp.mp4"
-
-        // Replace with your desired directory path
-        val directory = Environment.getExternalStorageDirectory().absolutePath + "/recordings/"
-
-        // Create the directory if it doesn't exist
-        val dir = File(directory)
-        if (!dir.exists()) {
-            dir.mkdirs()
-        }
-
-        // Return the complete file path
-        return directory + fileName
-    }
-    // Start the recording
-    private fun startRecording() {
-
-        // Create a new MediaRecorder instance
-        mediaRecorder = MediaRecorder()
-
-        // Configure the audio source, output format, and encoding parameters
-        mediaRecorder.setAudioSource(MediaRecorder.AudioSource.MIC)
-        mediaRecorder.setVideoSource(MediaRecorder.VideoSource.SURFACE)
-        mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-        mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-        mediaRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.DEFAULT)
-
-        val outputFilePath = getOutputFilePath()
-        mediaRecorder.setOutputFile(outputFilePath)
-
-        try {
-            // Configure the MediaRecorder
-
-            mediaRecorder.prepare()
-//            mediaRecorder.setPreviewDisplay(surfaceHolder.surface)
-            // Start the recording
-            mediaRecorder.start()
-            isRecording = true
-
-
-//            viewBinding.videoCaptureButton.text = "Stop Recording"
-        } catch (e: IOException) {
-            // Handle any errors
-            e.printStackTrace()
-            Toast.makeText(this, "Failed to start recording", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    // Stop the recording
-    private fun stopRecording() {
-        try {
-            // Stop the recording
-            mediaRecorder.stop()
-
-            // Reset the MediaRecorder
-            mediaRecorder.reset()
-
-            mediaRecorder.release()
-            isRecording = false
-//            viewBinding.videoCaptureButton.text = "Start Recording"
-            Toast.makeText(this, "Recording saved", Toast.LENGTH_SHORT).show()
-        } catch (e: Exception) {
-            // Handle any errors
-            e.printStackTrace()
-            Toast.makeText(this, "Failed to stop recording", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -360,9 +204,6 @@ class MainActivity : AppCompatActivity() {
             imageAnalyzer.setAnalyzer(
                 ContextCompat.getMainExecutor(this)
             ) { image: ImageProxy -> analyzer(image) }
-
-
-
 
             // Select back camera as a default
             @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
@@ -396,31 +237,24 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun nonMaxSuppression(
-        boundingBoxes: MutableList<FloatArray>,
-        overlapThresh: Float
+        boundingBoxes: MutableList<FloatArray>
     ): MutableList<FloatArray> {
 
         val selectedBoxes = mutableListOf<FloatArray>()
-
-        // Loop over all bounding boxes
         while (boundingBoxes.isNotEmpty()) {
-            // Select the bounding box with the highest confidence score
             val maxBox = boundingBoxes.maxByOrNull { it[4] } ?: break
             selectedBoxes.add(maxBox)
 
-            // Remove the selected box from the list
             boundingBoxes.remove(maxBox)
 
-            // Calculate overlap with other bounding boxes
             val overlaps = mutableListOf<FloatArray>()
             for (box in boundingBoxes) {
                 val overlap = calculateOverlap(maxBox, box)
-                if (overlap > overlapThresh) {
+                if (overlap > Yolov5Model.getIouThreshold()) {
                     overlaps.add(box)
                 }
             }
 
-            // Remove all bounding boxes that overlap with the selected box
             boundingBoxes.removeAll(overlaps)
         }
 
@@ -459,22 +293,15 @@ class MainActivity : AppCompatActivity() {
         val scaledBitmap = Bitmap.createScaledBitmap(
             resizedBitmap, inputShape[2], inputShape[2], false
         )
-        Log.d("OUTBOX", outputBox.toString())
-        val inputBuffer = createInputBuffer(scaledBitmap)
+        createInputBuffer(scaledBitmap)
+        counter += 1
 
+        executor.execute {
+            inferenceAndPostProcess(resizedBitmap.width, resizedBitmap.height)
+        }
 
-
-//        executor.execute {
-//            inferenceAndPostProcess(inputBuffer, resizedBitmap.width, resizedBitmap.height)
-//        }
-//
-//        for (box in finalBoundingBoxes) {
-//            Log.d("BOX", box.contentToString())
-//        }
         val startTime = SystemClock.uptimeMillis()
-//        drawRectangleAndShow(resizedBitmap)
-//        drawBitmapOnSurface()
-//        viewBinding.viewImage.setImageBitmap(resizedBitmap)
+        drawRectangleAndShow(resizedBitmap)
         val timeSpent = (SystemClock.uptimeMillis() - startTime).toInt()
         Log.d("TIME SPENT", "$timeSpent ms")
         imageProxy.close()
@@ -561,8 +388,6 @@ class MainActivity : AppCompatActivity() {
         finalBitmap = mutableBitmap
 
         viewBinding.viewImage.setImageBitmap(finalBitmap)
-        Log.d("BITMAP HEIGHT", bitmap.height.toString())
-        Log.d("BITMAP WIDTH", bitmap.width.toString())
         if (isCapture) {
             val currentTime = dateFormat.format(Date()).replace(":", ".")
             val folder = File(getExternalFilesDir(null), "${Yolov5Model.getFolderMain()}-${Yolov5Model.getFolderPrefix()}")
@@ -571,22 +396,35 @@ class MainActivity : AppCompatActivity() {
             val outputPngFile = File(folder,"$currentTime.jpg")
             saveBoundingBoxes(outputTxtFile, finalBoundingBoxes, bitmap.width, bitmap.height) // Save bounding box data
             saveImage(outputPngFile, bitmap) // Save image data
+
+            if (Yolov5Model.getIsTracking() && Yolov5Model.getIsSaveUntracked()) {
+                val outputTxtFileUntracked = File(folder, "$currentTime-untracked.txt")
+                saveBoundingBoxes(outputTxtFileUntracked, untrackedBoundingBoxes, bitmap.width, bitmap.height)
+            }
         }
 
     }
 
-    private fun createInputBuffer(resizedBitmap: Bitmap): ByteBuffer {
+    private fun createInputBuffer(resizedBitmap: Bitmap) {
 //        Log.d("TYPE", inputType)
+        inputBuffer.rewind()
         val pixels = IntArray(inputShape[1] * inputShape[2])
         resizedBitmap.getPixels(pixels, 0, inputShape[2], 0, 0, inputShape[2], inputShape[1])
         inputBuffer.rewind()
         for (pixel in pixels) {
-            inputBuffer.put((((pixel shr 16 and 0xFF) - IMAGE_MEAN) / IMAGE_STD / inp_scale + inp_zero_point) as Byte)
-            inputBuffer.put((((pixel shr 8 and 0xFF) - IMAGE_MEAN) / IMAGE_STD / inp_scale + inp_zero_point) as Byte)
-            inputBuffer.put((((pixel and 0xFF) - IMAGE_MEAN) / IMAGE_STD / inp_scale + inp_zero_point) as Byte)
+            inputBuffer.put(
+                (((pixel shr 16 and 0xFF) - IMAGE_MEAN) / IMAGE_STD / inputScale + inputZeroPoint).toInt()
+                    .toByte()
+            )
+            inputBuffer.put(
+                (((pixel shr 8 and 0xFF) - IMAGE_MEAN) / IMAGE_STD / inputScale + inputZeroPoint).toInt()
+                    .toByte()
+            )
+            inputBuffer.put(
+                (((pixel and 0xFF) - IMAGE_MEAN) / IMAGE_STD / inputScale + inputZeroPoint).toInt()
+                    .toByte()
+            )
         }
-
-        return inputBuffer
     }
 
     private fun imageProxyToBitmap(imageProxy: ImageProxy, rotation: Int): Bitmap {
@@ -628,119 +466,83 @@ class MainActivity : AppCompatActivity() {
 
     }
 
-    private fun inferenceAndPostProcess(inputBuffer: ByteBuffer, width: Int, height: Int) {
-        val startTime = SystemClock.uptimeMillis()
+    private fun inferenceAndPostProcess(width: Int, height: Int) {
         var outputMap: MutableMap<Int, Any> = HashMap()
-
+        val boundingBoxes = mutableListOf<FloatArray>()
         outputBuffer.rewind()
         outputMap.put(0, outputBuffer)
         val inputArray = arrayOf<Any>(inputBuffer)
+        val startTime = SystemClock.uptimeMillis()
         interpreter.runForMultipleInputsOutputs(inputArray, outputMap)
+        val endTime = SystemClock.uptimeMillis()
+        val inferenceTime = endTime - startTime
+        Log.d("Analyze", "Inference time Thread: $inferenceTime ms")
         val byteBuffer = outputMap[0] as ByteBuffer?
         byteBuffer!!.rewind()
 
-        val out = Array<FloatArray>(outputBox) {
+        val out = Array(outputBox) {
             FloatArray(6)
         }
 
         for (i in 0 until outputBox) {
             for (j in 0 until 6) {
-                out[i][j] = oup_scale * ((byteBuffer.get().toInt() and 0xFF) - oup_zero_point)
+                out[i][j] = outputScale * ((byteBuffer.get().toInt() and 0xFF) - outputZeroPoint)
             }
         }
 
-//        for (i in 0 until outputBox) {
-//
-//        }
+        for (i in 0 until outputBox) {
+            val objScore = out[i][4]
+            if (objScore >= Yolov5Model.getConfThreshold()) {
+                val xPos = out[i][0] * width
+                val yPos = out[i][1] * height
+                val widthBox = out[i][2] * width * 1.5f
+                val heightBox = out[i][3] * height * 1.5f
+                val box = floatArrayOf(
+                    max(0f, (xPos - widthBox / 2)),
+                    max(0f, (yPos - heightBox / 2)),
+                    min(width.toFloat(), (xPos + widthBox / 2)),
+                    min(height.toFloat(), (yPos + heightBox / 2)),
+                    objScore
+                )
+                boundingBoxes.add(box)
+            }
+        }
 
-//        val outputBuffer = Array(1) {
-//            Array(outputShape[1]) {
-//                ByteArray(6)
-//            }
-//        }
-//        interpreter.run(inputBuffer, outputBuffer)
-//        val boundingBoxes = mutableListOf<FloatArray>()
-//
-//        for (i in 0 until outputShape[1]) {
-//            val quantizedValue = outputBuffer[0][i][4]
-//            val objScore = (dequantizeFactor * (outputBuffer[0][i][4] - dequantizeBias)).toFloat()
-//            val classProb = (dequantizeFactor * (outputBuffer[0][i][5] - dequantizeBias)).toFloat()
-//            val confScore = classProb * objScore
-////            val classProb = outputBuffer[0][i][4]
-//            if (objScore >= 0.649f) {
-////                Log.d("Class PROB", classProb.toString())
-//                val xPos =
-//                    (dequantizeFactor * (outputBuffer[0][i][0] - dequantizeBias)) * width
-////                val xPos = outputBuffer[0][i][0] * width
-////                Log.d("X Center", xPos.toString())
-//                val yPos =
-//                    (dequantizeFactor * (outputBuffer[0][i][1] - dequantizeBias)) * height
-////                val yPos = outputBuffer[0][i][1] * height
-////                Log.d("Y Center", yPos.toString())
-//                val widthBox =
-//                    (dequantizeFactor * (outputBuffer[0][i][2] - dequantizeBias)) * width
-////                val widthBox = outputBuffer[0][i][2] * width
-////                Log.d("WIDTH BOX", widthBox.toString())
-//                val heightBox =
-//                    (dequantizeFactor * (outputBuffer[0][i][3] - dequantizeBias)) * height
-////                val heightBox = outputBuffer[0][i][3] * height
-////                Log.d("HEIGHT BOX", heightBox.toString())
-//                val box = floatArrayOf(
-//                    max(0f, (xPos - widthBox / 2).toFloat()),
-//                    max(0f, (yPos - heightBox / 2).toFloat()),
-//                    min(width.toFloat(), (xPos + widthBox / 2).toFloat()),
-//                    min(height.toFloat(), (yPos + heightBox / 2).toFloat()),
-//                    objScore
-//                )
-//
-////                val isGreaterThanZero = box.all { it > 0.0f }
-////                if (isGreaterThanZero && box[0] <= )
-////                Log.d("BOX", Arrays.toString(box))
-////                Log.d("JEDA", "================================================================")
-//                boundingBoxes.add(box)
-//            }
-//        }
+        for (box in boundingBoxes) {
+            Log.d("BOUNDING BOX", box.contentToString())
+        }
 
 
-//        val postProcessedBoxes = nonMaxSuppression(boundingBoxes, 0.5f)
-////        finalBoundingBoxes = postProcessedBoxes
-//        if (Yolov5Model.getIsTracking()) {
-//            Log.d("TRACKING", "TRUE")
-//            finalBoundingBoxes = updateSort(postProcessedBoxes)
-//        } else {
-//            Log.d("TRACKING", "FALSE")
-//            finalBoundingBoxes = postProcessedBoxes
-//        }
+        untrackedBoundingBoxes = nonMaxSuppression(boundingBoxes)
 
 
+        if (Yolov5Model.getIsTracking()) {
+            Log.d("TRACKING", "TRUE")
+            finalBoundingBoxes = updateSort(untrackedBoundingBoxes)
+        } else {
+            Log.d("TRACKING", "FALSE")
+            finalBoundingBoxes = untrackedBoundingBoxes
+        }
 
-        val endTime = SystemClock.uptimeMillis()
-        val inferenceTime = endTime - startTime
-        Log.d("Analyze", "Inference time Thread: $inferenceTime ms")
+        counter = 0
     }
 
     private fun updateSort(detections: List<FloatArray> = mutableListOf()): MutableList<FloatArray> {
         this.frameCount++
         val tracks = MutableList(this.objectTrackers.size) { FloatArray(5) }
         val toDelete: MutableList<Int> = mutableListOf()
-//        var returnedValue: MutableList<FloatArray> = mutableListOf()
-//        Log.d("ASS" ,this.objectTrackers.size.toString())
 
         for ((index, _) in tracks.withIndex()) {
             val position = this.objectTrackers[index].predict()
-//            Log.d("Position", Arrays.toString(position))
             tracks[index] = position
             val isEmpty = position.isEmpty()
             val hasNaN = position.any { it.isNaN() }
-//            val sizeNotEqual5 = position.size != 5
             if (isEmpty || hasNaN) {
                 toDelete.add(index)
             }
         }
         toDelete.sortedDescending().forEach { index ->
-            // Check if the index is within the range of the list
             if (index in 0 until tracks.size) {
-                // Remove the element at the specified index
                 tracks.removeAt(index)
                 this.objectTrackers.removeAt(index)
             }
@@ -760,13 +562,11 @@ class MainActivity : AppCompatActivity() {
 
 
         val returnedBBox = mutableListOf<FloatArray>()
-//        Log.d("TRACKER LENGTH", this.objectTrackers.size.toString())
+
         var i = this.objectTrackers.size
         for (tracker in this.objectTrackers.reversed()) {
             val bbox = tracker.getState()
-//            if (tracker.timeSinceUpdate < 1 && (tracker.hitStreak >= this.minHits || this.frameCount <= this.minHits)) {
-//                returnedBBox.add(bbox.plus((tracker.id + 1).toFloat()))
-//            }
+
             returnedBBox.add(bbox.plus((tracker.id + 1).toFloat()))
             i -= 1
             if (tracker.timeSinceUpdate > this.maxAge) {
@@ -774,7 +574,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-//        Log.d("TRACKER LENGTH AFTER", this.objectTrackers.size.toString())
 
         return returnedBBox
     }
@@ -978,18 +777,6 @@ class MainActivity : AppCompatActivity() {
         return iouMatrix
     }
 
-
-
-
-    private fun loadModelFile(context: Context): MappedByteBuffer {
-        val fileDescriptor = context.assets.openFd("best-50e-yolov5n6-448-int8.tflite")
-        val inputStream = FileInputStream(fileDescriptor.fileDescriptor)
-        val fileChannel = inputStream.channel
-        val startOffset = fileDescriptor.startOffset
-        val declaredLength = fileDescriptor.declaredLength
-        return fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength)
-    }
-
     private fun allPermissionsGranted() = REQUIRED_PERMISSIONS.all {
         ContextCompat.checkSelfPermission(
             baseContext, it) == PackageManager.PERMISSION_GRANTED
@@ -1004,7 +791,6 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "CameraXApp"
-        private const val FILENAME_FORMAT = "yyyy-MM-dd-HH-mm-ss-SSS"
         private const val REQUEST_CODE_PERMISSIONS = 10
         private val REQUIRED_PERMISSIONS =
             mutableListOf (

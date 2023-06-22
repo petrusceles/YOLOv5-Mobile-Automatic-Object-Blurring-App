@@ -4,11 +4,12 @@ import java.nio.MappedByteBuffer
 
 object Yolov5Model {
     private lateinit var mappedByteBuffer: MappedByteBuffer
-    private var dequantizeFactor = 0.02953994646668434
-    private var dequantizeBias = 2
+    private var confThreshold = 0.5f
+    private var iouThreshold = 0.5f
     private var folderPrefix = ""
     private var folderMain = ""
     private var isTracking = false
+    private var isSaveUntracked = false
 
     fun setMappedByteBuffer(buffer: MappedByteBuffer) {
         mappedByteBuffer = buffer
@@ -17,12 +18,6 @@ object Yolov5Model {
     fun getMappedByteBuffer(): MappedByteBuffer {
         return mappedByteBuffer
     }
-
-    fun setDequantizeFactorAndBias(_dequantizeFactor: Double, _dequantizeBias: Int) {
-        dequantizeFactor = _dequantizeFactor
-        dequantizeBias = _dequantizeBias
-    }
-
     fun setFolderPrefix(prefix: String) {
         folderPrefix = prefix
     }
@@ -35,12 +30,16 @@ object Yolov5Model {
         isTracking = is_tracking
     }
 
-    fun getDequantizeFactor(): Double {
-        return dequantizeFactor
+    fun setConfThreshold(conf_threshold: Float) {
+        confThreshold = conf_threshold
     }
 
-    fun getDequantizeBias(): Int {
-        return dequantizeBias
+    fun setIouThreshold(iou_threshold: Float) {
+        iouThreshold = iou_threshold
+    }
+
+    fun setIsSaveUntracked(is_save_untracked: Boolean) {
+        isSaveUntracked = is_save_untracked
     }
 
     fun getFolderPrefix(): String {
@@ -52,5 +51,17 @@ object Yolov5Model {
 
     fun getIsTracking(): Boolean{
         return isTracking
+    }
+
+    fun getConfThreshold(): Float {
+        return confThreshold
+    }
+
+    fun getIouThreshold(): Float {
+        return iouThreshold
+    }
+
+    fun getIsSaveUntracked() :Boolean {
+        return isSaveUntracked
     }
 }

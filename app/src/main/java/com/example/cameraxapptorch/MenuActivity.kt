@@ -54,15 +54,12 @@ class MenuActivity : ComponentActivity() {
             }
         }
 
-        viewBinding.dequantizeValueSetButton.setOnClickListener {
-            if (viewBinding.dequantizeBiasText.text.toString().toDoubleOrNull() == null  || viewBinding.dequantizeFactorText.text.toString().toDoubleOrNull() == null) {
-                showToast("Dequantize value invalid")
-            } else {
-                val dequantizeBias = viewBinding.dequantizeBiasText.text.toString().toInt()
-                val dequantizeFactor = viewBinding.dequantizeFactorText.text.toString().toDouble()
-                Yolov5Model.setDequantizeFactorAndBias(dequantizeFactor,dequantizeBias)
-                Log.d("DEQUANTIZE BIAS", dequantizeBias.toString())
-                Log.d("DEQUANTIZE FACTOR", dequantizeFactor.toString())
+        viewBinding.setThresholdValue.setOnClickListener {
+            try {
+                Yolov5Model.setConfThreshold(viewBinding.confThresh.text.toString().toFloat())
+                Yolov5Model.setIouThreshold(viewBinding.iouThresh.text.toString().toFloat())
+            } catch (err: Error) {
+                showToast("Error threshold values")
             }
         }
 
@@ -70,8 +67,12 @@ class MenuActivity : ComponentActivity() {
             Yolov5Model.setFolderPrefix(text.toString())
         }
 
-        viewBinding.trackingCheck.setOnCheckedChangeListener { buttonView, isChecked ->
+        viewBinding.trackingCheck.setOnCheckedChangeListener { _, isChecked ->
             Yolov5Model.setIsTracking(isChecked)
+        }
+
+        viewBinding.saveUntrackedCheck.setOnCheckedChangeListener { _, isChecked ->
+            Yolov5Model.setIsSaveUntracked(isChecked)
         }
     }
 
@@ -96,6 +97,7 @@ class MenuActivity : ComponentActivity() {
         return filenameWithoutExtension
     }
 
+    @Deprecated("Deprecated in Java")
     @Suppress("DEPRECATION")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
@@ -139,48 +141,6 @@ class MenuActivity : ComponentActivity() {
         fileName = fileName?.substringAfterLast(".", "")
         return fileName
     }
-
-
-
-//    private fun checkPermissionAndOpenFilePicker() {
-//        val permission = Manifest.permission.READ_EXTERNAL_STORAGE
-//        Log.d(PICK_TFLITE_FILE_REQUEST,permission)
-//        if (ContextCompat.checkSelfPermission(this, permission) ==
-//            PackageManager.PERMISSION_GRANTED
-//        ) {
-//            openFilePicker()
-//        } else {
-//            if (ActivityCompat.shouldShowRequestPermissionRationale(this, permission)) {
-//                showToast("Storage permission is required to upload a file")
-//            }
-//        }
-//    }
-//
-//
-//    private val pickFileLauncher = registerForActivityResult(
-//        ActivityResultContracts.StartActivityForResult()
-//    ) { result ->
-//        if (result.resultCode == Activity.RESULT_OK) {
-//            val data: Intent? = result.data
-//            val selectedFileUri: Uri? = data?.data
-//            if (selectedFileUri != null) {
-//                val fileDescriptor = contentResolver.openFileDescriptor(selectedFileUri, "r")
-//                if (fileDescriptor != null) {
-//                    val fileInputStream = FileInputStream(fileDescriptor.fileDescriptor)
-//                    val fileChannel = fileInputStream.channel
-//                    val startOffset = 0L
-//                    val declaredLength = fileDescriptor.statSize
-//                    tfliteModel = fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength)
-//                    showToast("File uploaded successfully!")
-//                } else {
-//                    showToast("Error opening the file")
-//                }
-//            } else {
-//                showToast("File selection canceled")
-//            }
-//        }
-//    }
-
 
     private fun showToast(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
