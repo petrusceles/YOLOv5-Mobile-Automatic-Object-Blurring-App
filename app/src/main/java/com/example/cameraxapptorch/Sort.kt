@@ -1,16 +1,17 @@
 package com.example.cameraxapptorch
 
+import android.content.Context
 import com.chaquo.python.PyObject
 import com.chaquo.python.Python
+import com.chaquo.python.android.AndroidPlatform
 import kotlin.math.max
 import kotlin.math.min
 
-class Sort {
+class Sort(module: PyObject) {
+
     private var objectTrackers: MutableList<KalmanBoxTracker> = mutableListOf()
     private var frameCount: Int = 0
-
-    val py = Python.getInstance()
-    private val module: PyObject = py.getModule("lsa")
+    private val module = module
 
     fun updateSort(detections: List<FloatArray> = mutableListOf()): MutableList<FloatArray> {
         this.frameCount++

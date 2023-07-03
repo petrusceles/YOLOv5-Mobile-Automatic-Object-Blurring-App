@@ -11,6 +11,9 @@ object Yolov5Model {
     private var isTracking = false
     private var isSaveUntracked = false
     private var maxTrackerAge = 0
+    private var isHisteq = false
+    private var isGrayscale = false
+
     fun setMappedByteBuffer(buffer: MappedByteBuffer) {
         mappedByteBuffer = buffer
     }
@@ -59,5 +62,18 @@ object Yolov5Model {
     }
     fun getMaxTrackerAge(): Int {
         return maxTrackerAge
+    }
+
+    fun setHisteq(histeq: Boolean) {
+        isHisteq = histeq
+    }
+    fun getHisteq() :Boolean {
+        return isHisteq
+    }
+    fun setGrayscale(grayscale: Boolean) {
+        isGrayscale = grayscale
+    }
+    fun getGrayscale() :Boolean {
+        return isGrayscale
     }
 }

@@ -60,8 +60,8 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SimpleDateFormat")
     private val dateFormat = SimpleDateFormat("yyyyMMdd_HHmmss")
 
-
-    private val sortTracker = Sort()
+    private var currentBitmap: Bitmap? = null
+    private lateinit var sortTracker: Sort
 
     private var finalBoundingBoxes: MutableList<FloatArray> = mutableListOf()
     private var untrackedBoundingBoxes: MutableList<FloatArray> = mutableListOf()
@@ -95,6 +95,14 @@ class MainActivity : AppCompatActivity() {
         options.useNNAPI = true
         options.numThreads = 2
         yolov5Detector = Yolov5Detector(tfliteModel,options)
+
+        if (!Python.isStarted()) {
+            Python.start(AndroidPlatform(this))
+        }
+
+        val py = Python.getInstance()
+        sortTracker = Sort(py.getModule("lsa"))
+
 
         viewBinding.captureButton.setOnClickListener {
             isCapture = !isCapture
@@ -156,29 +164,54 @@ class MainActivity : AppCompatActivity() {
 
         val startTime = SystemClock.uptimeMillis()
 
-        val resizedBitmap = Bitmap.createScaledBitmap(bitmap,448,448,true)
-
-        untrackedBoundingBoxes = yolov5Detector.inferenceAndPostProcess(bitmap.width,bitmap.height,resizedBitmap)
-
-        val trackedBoundingBoxes = sortTracker.updateSort(untrackedBoundingBoxes)
-
-        finalBoundingBoxes = if (getIsTracking()) {
-            trackedBoundingBoxes
+//        val resizedBitmap = ImageProcessor.scaleAndGrayScale(bitmap,yolov5Detector.inputShape[1],yolov5Detector.inputShape[2])
+        var resizedBitmap = if (Yolov5Model.getGrayscale()) {
+            ImageProcessor.scaleAndGrayScale(bitmap,yolov5Detector.inputShape[1],yolov5Detector.inputShape[2])
+        } else if (Yolov5Model.getHisteq()) {
+            ImageProcessor.scaleAndHisteq(
+                bitmap,
+                yolov5Detector.inputShape[1],
+                yolov5Detector.inputShape[2]
+            )
         } else {
-            untrackedBoundingBoxes
+            ImageProcessor.scaleOnly(
+                bitmap,
+                yolov5Detector.inputShape[1],
+                yolov5Detector.inputShape[2])
+        }
+        yolov5Detector.createInputBuffer(resizedBitmap)
+
+        executor.execute {
+            currentBitmap = bitmap
+            untrackedBoundingBoxes = yolov5Detector.inferenceAndPostProcess(bitmap.width,bitmap.height,resizedBitmap)
+
+            for (box in untrackedBoundingBoxes) {
+                Log.d("BOXES", box.contentToString())
+            }
+
+            finalBoundingBoxes = if (getIsTracking()) {
+                sortTracker.updateSort(untrackedBoundingBoxes)
+            } else {
+                untrackedBoundingBoxes
+            }
+
         }
 
-        drawRectangleAndShow(bitmap)
+//        drawResizedBitmapInImageView(resizedBitmap,viewBinding.imageView)
+
+        currentBitmap?.let { drawRectangleAndShow(it) }
 
         imageProxy.close()
         val timeSpent = (SystemClock.uptimeMillis() - startTime).toInt()
         Log.d("TIME SPENT", "$timeSpent ms")
     }
 
-//    fun drawResizedBitmapInImageView(resizedBitmap: Bitmap, imageView: ImageView) {
-//        val drawable = BitmapDrawable(imageView.resources, resizedBitmap)
-//        imageView.setImageDrawable(drawable)
-//    }
+
+    fun drawResizedBitmapInImageView(resizedBitmap: Bitmap, imageView: ImageView) {
+        val drawable = BitmapDrawable(imageView.resources, resizedBitmap)
+        imageView.setImageDrawable(drawable)
+    }
+
     private fun saveBoundingBoxes(file: File, boundingBoxes: List<FloatArray>, imageWidth: Int, imageHeight: Int) {
         try {
             val fileOutputStream = FileOutputStream(file)

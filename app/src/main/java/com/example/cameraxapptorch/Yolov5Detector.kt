@@ -19,7 +19,7 @@ class Yolov5Detector (tfliteModel: MappedByteBuffer, options: Interpreter.Option
 
 
     private var inputTensor: Tensor = interpreter.getInputTensor(0)
-    private var inputShape: IntArray = inputTensor.shape() // [batch_size, height, width, channels]
+    var inputShape: IntArray = inputTensor.shape() // [batch_size, height, width, channels]
     private var inputType: DataType = inputTensor.dataType()
     private var inputSize: Int = inputShape[1] * inputShape[2] * inputShape[3]
 
@@ -27,7 +27,7 @@ class Yolov5Detector (tfliteModel: MappedByteBuffer, options: Interpreter.Option
     private var inputZeroPoint: Int = inputTensor.quantizationParams().zeroPoint;
 
     private var outputTensor: Tensor = interpreter.getOutputTensor(0)
-    private var outputShape: IntArray = outputTensor.shape() // [batch_size, height, width, channels]
+    var outputShape: IntArray = outputTensor.shape() // [batch_size, height, width, channels]
     private var outputType: DataType = outputTensor.dataType()
     private var outputSize: Int = outputShape[0] * outputShape[1] * outputShape[2]
 
@@ -43,7 +43,7 @@ class Yolov5Detector (tfliteModel: MappedByteBuffer, options: Interpreter.Option
         rewind()
     }
 
-    private fun createInputBuffer(scaledBitmap: Bitmap) {
+    fun createInputBuffer(scaledBitmap: Bitmap) {
         val pixels = IntArray(inputShape[1] * inputShape[2])
         scaledBitmap.getPixels(pixels, 0, inputShape[2], 0, 0, inputShape[2], inputShape[1])
         inputBuffer.clear()
@@ -64,8 +64,6 @@ class Yolov5Detector (tfliteModel: MappedByteBuffer, options: Interpreter.Option
     }
 
     fun inferenceAndPostProcess(width: Int, height: Int, bitmap: Bitmap): MutableList<FloatArray> {
-        createInputBuffer(bitmap)
-
         val boundingBoxes = mutableListOf<FloatArray>()
 
         val outputMap: MutableMap<Int, Any> = HashMap()

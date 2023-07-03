@@ -89,6 +89,18 @@ class MenuActivity : ComponentActivity() {
         viewBinding.folderPrefixText.doOnTextChanged { text, _, _, _ -> Yolov5Model.setFolderPrefix(text.toString()) }
         viewBinding.trackingCheck.setOnCheckedChangeListener { _, isChecked -> Yolov5Model.setIsTracking(isChecked) }
         viewBinding.saveUntrackedCheck.setOnCheckedChangeListener { _, isChecked ->  Yolov5Model.setIsSaveUntracked(isChecked) }
+        viewBinding.radioImageProcessing.setOnCheckedChangeListener { _, checkedId ->
+            Yolov5Model.setGrayscale(false)
+            Yolov5Model.setHisteq(false)
+            when (checkedId) {
+                viewBinding.histeq.id -> {
+                    Yolov5Model.setHisteq(true)
+                }
+                viewBinding.grayscale.id -> {
+                    Yolov5Model.setGrayscale(true)
+                }
+            }
+        }
     }
     private fun getFilenameWithoutExtensionFromUri(uri: Uri): String? {
         var filenameWithoutExtension: String? = null

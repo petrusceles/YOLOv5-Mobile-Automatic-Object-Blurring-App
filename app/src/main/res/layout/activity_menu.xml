@@ -17,7 +17,7 @@
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintVertical_bias="0.648" />
+        app:layout_constraintVertical_bias="0.721" />
 
     <com.google.android.material.button.MaterialButton
         android:id="@+id/setThresholdValue"
@@ -26,9 +26,10 @@
         android:text="SET THRESHOLD VALUES"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintHorizontal_bias="0.526"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintVertical_bias="0.499" />
+        app:layout_constraintVertical_bias="0.617" />
 
     <EditText
         android:id="@+id/conf_thresh"
@@ -66,28 +67,57 @@
         android:id="@+id/iouThresh"/>
 
     <CheckBox
-        android:id="@+id/trackingCheck"
-        android:layout_width="114dp"
-        android:layout_height="49dp"
-        android:text="tracking"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintHorizontal_bias="0.198"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintVertical_bias="0.269" />
-
-    <CheckBox
+        android:id="@+id/saveUntrackedCheck"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="save untracked"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintHorizontal_bias="0.75"
+        app:layout_constraintHorizontal_bias="0.225"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintVertical_bias="0.27"
-        android:id="@+id/saveUntrackedCheck"/>
+        app:layout_constraintVertical_bias="0.266" />
+
+    <CheckBox
+        android:id="@+id/trackingCheck"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="tracking"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintHorizontal_bias="0.701"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintVertical_bias="0.266" />
+
+    <RadioGroup
+        android:id="@+id/radioImageProcessing"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <RadioButton
+            android:id="@+id/histeq"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="histeq" />
+
+        <RadioButton
+            android:id="@+id/grayscale"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="grayscale" />
+
+        <RadioButton
+            android:id="@+id/no"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="no" />
+    </RadioGroup>
 
     <TextView
         android:id="@+id/message_text"
@@ -123,7 +153,7 @@
         app:layout_constraintHorizontal_bias="0.492"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintVertical_bias="0.786" />
+        app:layout_constraintVertical_bias="0.828" />
 
 
 </androidx.constraintlayout.widget.ConstraintLayout>
