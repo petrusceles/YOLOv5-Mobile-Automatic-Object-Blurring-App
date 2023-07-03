@@ -1,25 +1,23 @@
 package com.example.cameraxapptorch
 
-import android.util.Log
 import org.apache.commons.math3.linear.Array2DRowRealMatrix
 import org.apache.commons.math3.linear.ArrayRealVector
 import org.apache.commons.math3.linear.RealMatrix
 import org.apache.commons.math3.linear.RealVector
 import org.apache.commons.math3.filter.MeasurementModel
-import org.apache.commons.math3.filter.ProcessModel
 import org.apache.commons.math3.filter.DefaultMeasurementModel
 import org.apache.commons.math3.filter.DefaultProcessModel
 import org.apache.commons.math3.filter.KalmanFilter
 import kotlin.math.sqrt
 
+//explanation https://chat.openai.com/share/688c6ed8-1f2a-4a3c-9ddd-0b5e334e3488
 class KalmanBoxTracker(
     boundingBox: FloatArray?
 ) {
-
     private val F: RealMatrix = Array2DRowRealMatrix(arrayOf(
-        doubleArrayOf(1.0, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0),
-        doubleArrayOf(0.0, 1.0, 0.0, 0.0, 0.0, 0.01, 0.0),
-        doubleArrayOf(0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.01),
+        doubleArrayOf(1.0, 0.0, 0.0, 0.0, 10000.0, 0.0, 0.0),
+        doubleArrayOf(0.0, 1.0, 0.0, 0.0, 0.0, 10000.0, 0.0),
+        doubleArrayOf(0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0),
         doubleArrayOf(0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0),
         doubleArrayOf(0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0),
         doubleArrayOf(0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0),
@@ -41,7 +39,6 @@ class KalmanBoxTracker(
         setEntry(4, 4, 10000.0)
         setEntry(5, 5, 10000.0)
         setEntry(6, 6, 10000.0)
-//        scalarMultiply(10.0)
     }
 
     private var x: RealVector
@@ -54,7 +51,6 @@ class KalmanBoxTracker(
         setEntry(4, 4, 0.01)
         setEntry(5, 5, 0.01)
         setEntry(6, 6, 0.0001)
-//        setSubMatrix(Array2DRowRealMatrix(Array(7) { i -> doubleArrayOf(0.0) }).scalarMultiply(0.01).data, 0, 0)
     }
 
     private val R: RealMatrix = Array2DRowRealMatrix(4, 4).apply {
@@ -69,7 +65,6 @@ class KalmanBoxTracker(
         val y1 = box[1]
         val x2 = box[2]
         val y2 = box[3]
-//        Log.d("BOX BEFORE", box.contentToString())
         val width = x2 - x1
         val height = y2 - y1
         val xCenter = x1 + 0.5 * width
@@ -97,16 +92,6 @@ class KalmanBoxTracker(
 
     private var measurementModel: MeasurementModel
 
-    var timeSinceUpdate = 0.0f
-
-    private var history = mutableListOf<FloatArray>()
-
-    private var hits :Int = 0
-
-    var hitStreak: Int = 0
-
-    private var age :Int = 0
-
     companion object {
         private var count = 0
     }
@@ -117,28 +102,29 @@ class KalmanBoxTracker(
         id = count++
         x = boundingBox?.let { getBoxFeatures(it) }!!
         x = x.append(ArrayRealVector(doubleArrayOf(0.0,0.0,0.0)))
-//        Log.d("F", "${F.rowDimension.toString()} X ${F.columnDimension.toString()}")
-//        Log.d("Q", "${Q.rowDimension.toString()} X ${Q.columnDimension.toString()}")
-//        Log.d("x", "${x.dimension.toString()}")
-//        Log.d("P", "${P.rowDimension.toString()} X ${P.columnDimension.toString()}")
-//        Log.d("H", "${H.rowDimension.toString()} X ${H.columnDimension.toString()}")
-//        Log.d("R", "${R.rowDimension.toString()} X ${R.columnDimension.toString()}")
-//        Log.d("F", F.toString())
-//        Log.d("Q", Q.toString())
-//        Log.d("xVal", x.toString())
-//        Log.d("P", P.toString())
-//        Log.d("H", H.toString())
-//        Log.d("R", R.toString())
         processModel = DefaultProcessModel(F,null,Q,x,P)
         measurementModel = DefaultMeasurementModel(H, R)
         kalmanFilter = KalmanFilter(processModel,measurementModel)
-//        kalmanFilter = DefaultK
-
-        val h = this.getState()
-//        Log.d("BOX AFTER",kalmanFilter.stateEstimation.contentToString() )
     }
 
-
+    var timeSinceUpdate = 0.0f
+    private var history = mutableListOf<FloatArray>()
+    private var hits :Int = 0
+    var hitStreak: Int = 0
+    private var age :Int = 0
+    fun predict(): FloatArray {
+        if ((kalmanFilter.stateEstimation[6] + kalmanFilter.stateEstimation[2]) <= 0) {
+            kalmanFilter.stateEstimation[6] *= 0.0
+        }
+        kalmanFilter.predict()
+        this.age++
+        if (this.timeSinceUpdate > 0) {
+            this.hitStreak = 0
+        }
+        this.timeSinceUpdate++
+        this.history.add(convertBBox(kalmanFilter.stateEstimation))
+        return this.history.last()
+    }
     fun update(boundingBox: FloatArray) {
         val x_new = getBoxFeatures(boundingBox)
         this.timeSinceUpdate = 0.0f
@@ -146,26 +132,6 @@ class KalmanBoxTracker(
         this.hits++
         this.hitStreak++
         this.kalmanFilter.correct(x_new)
-    }
-
-    fun predict(): FloatArray {
-        if ((kalmanFilter.stateEstimation[6] + kalmanFilter.stateEstimation[2]) <= 0) {
-            kalmanFilter.stateEstimation[6] *= 0.0
-        }
-
-        kalmanFilter.predict()
-
-        this.age++
-
-        if (this.timeSinceUpdate > 0) {
-            this.hitStreak = 0
-        }
-
-        this.timeSinceUpdate++
-
-        this.history.add(convertBBox(kalmanFilter.stateEstimation))
-
-        return this.history.last()
     }
 
     fun getState() : FloatArray{

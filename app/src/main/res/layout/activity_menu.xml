@@ -43,6 +43,17 @@
         app:layout_constraintVertical_bias="0.385" />
 
     <EditText
+        android:id="@+id/maxTrackerAge"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:hint="maxTrackerAge"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintVertical_bias="0.173" />
+
+    <EditText
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:hint="IoUThresh"
@@ -82,7 +93,7 @@
         android:id="@+id/message_text"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="YOLOv5 LICENSE PLATE DETECTION"
+        android:text="YOLOv5 LICENSE PLATE BLURRING"
         android:textSize="18sp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
