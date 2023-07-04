@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.graphics.*
 import android.graphics.drawable.BitmapDrawable
+import android.media.MediaRecorder
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
@@ -66,8 +67,11 @@ class MainActivity : AppCompatActivity() {
     private var finalBoundingBoxes: MutableList<FloatArray> = mutableListOf()
     private var untrackedBoundingBoxes: MutableList<FloatArray> = mutableListOf()
     private var isCapture = false
+    private var isRecord = false
 
     private var counter = 0
+
+    private lateinit var mediaRecorder: MediaRecorder
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -111,6 +115,18 @@ class MainActivity : AppCompatActivity() {
             } else {
                 counter = 0
                 viewBinding.captureButton.text = "Start Capture"
+            }
+        }
+
+
+        viewBinding.recordButton.setOnClickListener {
+            isRecord = !isRecord
+            if (isRecord) {
+                viewBinding.recordButton.text = "Stop Record"
+            } else {
+                counter = 0
+                viewBinding.recordButton.text = "Start Record"
+                stopRecording()
             }
         }
     }
@@ -203,6 +219,44 @@ class MainActivity : AppCompatActivity() {
         Log.d("TIME SPENT", "$timeSpent ms")
     }
 
+    private fun recordFrame(bitmap: Bitmap) {
+        try {
+            // Start the recording if it's not already started
+            if (!::mediaRecorder.isInitialized) {
+                mediaRecorder = MediaRecorder()
+
+                mediaRecorder.setVideoSource(MediaRecorder.VideoSource.SURFACE)
+                mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+
+
+                mediaRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
+                mediaRecorder.setOutputFile(getVideoOutputFile())
+                mediaRecorder.setVideoEncodingBitRate(10000000)
+                mediaRecorder.setVideoSize(bitmap.width, bitmap.height)
+                mediaRecorder.prepare()
+                mediaRecorder.start()
+            }
+
+            // Write the bitmap data to the media recorder surface
+            val surface = mediaRecorder.surface
+            val canvas = surface.lockCanvas(null)
+            canvas.drawBitmap(bitmap, 0f, 0f, null)
+            surface.unlockCanvasAndPost(canvas)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to record frame", e)
+        }
+    }
+
+    private fun stopRecording() {
+        try {
+            // Stop and release the media recorder
+            mediaRecorder.stop()
+            mediaRecorder.reset()
+            mediaRecorder.release()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to stop recording", e)
+        }
+    }
 
     fun drawResizedBitmapInImageView(resizedBitmap: Bitmap, imageView: ImageView) {
         val drawable = BitmapDrawable(imageView.resources, resizedBitmap)
@@ -270,6 +324,9 @@ class MainActivity : AppCompatActivity() {
             canvas.drawBitmap(blurredRegion,left.toFloat(), top.toFloat(), blurPaint)
         }
         viewBinding.imageView.setImageBitmap(mutableBitmap)
+        if (isRecord) {
+            recordFrame(mutableBitmap)
+        }
         if (isCapture) {
             counter += 1
             val currentTime = dateFormat.format(Date()).replace(":", ".")
@@ -289,5 +346,13 @@ class MainActivity : AppCompatActivity() {
     private fun allPermissionsGranted() = REQUIRED_PERMISSIONS.all {
         ContextCompat.checkSelfPermission(
             baseContext, it) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun getVideoOutputFile() : File {
+        val currentTime = dateFormat.format(Date()).replace(":", ".")
+        val folder = File(getExternalFilesDir(null), "${Yolov5Model.getFolderMain()}-${Yolov5Model.getFolderPrefix()}-Video")
+        folder.mkdirs()
+        val outputMp4File = File(folder,"$currentTime-${counter.toString().padStart(4,'0')}.mp4")
+        return outputMp4File
     }
 }
