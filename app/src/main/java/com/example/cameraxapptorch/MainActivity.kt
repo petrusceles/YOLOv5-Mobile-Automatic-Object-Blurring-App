@@ -164,7 +164,6 @@ class MainActivity : AppCompatActivity() {
 
         val startTime = SystemClock.uptimeMillis()
 
-//        val resizedBitmap = ImageProcessor.scaleAndGrayScale(bitmap,yolov5Detector.inputShape[1],yolov5Detector.inputShape[2])
         var resizedBitmap = if (Yolov5Model.getGrayscale()) {
             ImageProcessor.scaleAndGrayScale(bitmap,yolov5Detector.inputShape[1],yolov5Detector.inputShape[2])
         } else if (Yolov5Model.getHisteq()) {
@@ -196,8 +195,6 @@ class MainActivity : AppCompatActivity() {
             }
 
         }
-
-//        drawResizedBitmapInImageView(resizedBitmap,viewBinding.imageView)
 
         currentBitmap?.let { drawRectangleAndShow(it) }
 
