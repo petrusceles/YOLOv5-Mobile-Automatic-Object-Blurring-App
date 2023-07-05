@@ -9,10 +9,12 @@ import android.media.MediaRecorder
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
+import android.provider.MediaStore.Audio.Media
 import android.util.Log
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.widget.ImageView
+import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.*
 import androidx.camera.core.CameraSelector.LENS_FACING_BACK
@@ -57,11 +59,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var viewBinding: ActivityMainBinding
     private lateinit var cameraExecutor: ExecutorService
     private val executor = Executors.newSingleThreadExecutor()
+    private val recorderExecutor = Executors.newSingleThreadExecutor()
     private lateinit var yolov5Detector: Yolov5Detector
     @SuppressLint("SimpleDateFormat")
     private val dateFormat = SimpleDateFormat("yyyyMMdd_HHmmss")
 
     private var currentBitmap: Bitmap? = null
+    private lateinit var mutableBitmap: Bitmap
     private lateinit var sortTracker: Sort
 
     private var finalBoundingBoxes: MutableList<FloatArray> = mutableListOf()
@@ -224,24 +228,26 @@ class MainActivity : AppCompatActivity() {
             // Start the recording if it's not already started
             if (!::mediaRecorder.isInitialized) {
                 mediaRecorder = MediaRecorder()
-
+                mediaRecorder.setAudioSource(MediaRecorder.AudioSource.MIC)
                 mediaRecorder.setVideoSource(MediaRecorder.VideoSource.SURFACE)
                 mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
 
-
-                mediaRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
+                mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.HE_AAC)
+                mediaRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.HEVC)
                 mediaRecorder.setOutputFile(getVideoOutputFile())
+                mediaRecorder.setAudioEncodingBitRate(10000000)
                 mediaRecorder.setVideoEncodingBitRate(10000000)
+
                 mediaRecorder.setVideoSize(bitmap.width, bitmap.height)
                 mediaRecorder.prepare()
                 mediaRecorder.start()
             }
 
             // Write the bitmap data to the media recorder surface
-            val surface = mediaRecorder.surface
-            val canvas = surface.lockCanvas(null)
-            canvas.drawBitmap(bitmap, 0f, 0f, null)
-            surface.unlockCanvasAndPost(canvas)
+                val surface = mediaRecorder.surface
+                val canvas = surface.lockCanvas(null)
+                canvas.drawBitmap(bitmap, 0f, 0f, null)
+                surface.unlockCanvasAndPost(canvas)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to record frame", e)
         }
@@ -297,7 +303,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun drawRectangleAndShow(bitmap: Bitmap) {
-        val mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true)
+        mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(mutableBitmap)
         val blurPaint = Paint().apply {
             maskFilter = BlurMaskFilter(10f, BlurMaskFilter.Blur.NORMAL)
@@ -325,7 +331,7 @@ class MainActivity : AppCompatActivity() {
         }
         viewBinding.imageView.setImageBitmap(mutableBitmap)
         if (isRecord) {
-            recordFrame(mutableBitmap)
+                recordFrame(mutableBitmap)
         }
         if (isCapture) {
             counter += 1
