@@ -92,6 +92,18 @@ class Yolov5Detector (tfliteModel: MappedByteBuffer, options: Interpreter.Option
             }
         }
 
+        val resizedWidth = inputShape[1]
+        val resizedHeight = inputShape[1]
+
+        val scaleX = width.toFloat() / resizedWidth
+        val scaleY = height.toFloat() / resizedHeight
+
+        val xOffset = (resizedWidth - width.toFloat() / scaleX) / 2
+        val yOffset = (resizedHeight - height.toFloat() / scaleY) / 2
+
+
+
+
         for (i in 0 until outputShape[1]) {
             val objScore = out[i][4]
             if (objScore >= Yolov5Model.getConfThreshold()) {
@@ -100,8 +112,8 @@ class Yolov5Detector (tfliteModel: MappedByteBuffer, options: Interpreter.Option
                 }
                 val xPos = out[i][0] * width
                 val yPos = out[i][1] * height
-                val widthBox = out[i][2] * width * 1.5f
-                val heightBox = out[i][3] * height * 1.5f
+                val widthBox = out[i][2] * width
+                val heightBox = out[i][3] * height
                 val box = floatArrayOf(
                     max(0f, (xPos - widthBox / 2)),
                     max(0f, (yPos - heightBox / 2)),

@@ -19,15 +19,15 @@ class ImageProcessor {
     companion object {
 
         fun scaleAndHisteq(bitmap: Bitmap, width: Int, height: Int): Bitmap {
-            return histogramEqualization(Bitmap.createScaledBitmap(bitmap,width,height,false))
+            return resizeImageWithPadding(histogramEqualization(bitmap),width,height)
         }
 
         fun scaleAndGrayScale(bitmap: Bitmap, width: Int, height: Int): Bitmap {
-            return convertToGrayscale(Bitmap.createScaledBitmap(bitmap,width,height,false))
+            return resizeImageWithPadding(convertToGrayscale(bitmap),width,height)
         }
 
         fun scaleOnly(bitmap: Bitmap, width: Int, height: Int): Bitmap {
-            return Bitmap.createScaledBitmap(bitmap,width,height,false)
+            return resizeImageWithPadding(bitmap,width,height)
         }
 
         fun convertToGrayscale(bitmap: Bitmap): Bitmap {
@@ -84,6 +84,40 @@ class ImageProcessor {
 
             return equalizedBitmap
         }
+
+        fun resizeImageWithPadding(bitmap: Bitmap, targetWidth: Int, targetHeight: Int): Bitmap {
+            val originalWidth = bitmap.width
+            val originalHeight = bitmap.height
+
+            val scaleFactor = Math.max(
+                originalWidth.toFloat() / targetWidth,
+                originalHeight.toFloat() / targetHeight
+            )
+
+            val newWidth = (originalWidth / scaleFactor).toInt()
+            val newHeight = (originalHeight / scaleFactor).toInt()
+
+            val leftPadding = (targetWidth - newWidth) / 2
+            val topPadding = (targetHeight - newHeight) / 2
+
+            val resizedBitmap = Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
+
+            val outputBitmap = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(outputBitmap)
+
+            // Fill the entire output bitmap with the padding color
+            canvas.drawColor(Color.rgb(0,0,0))
+
+            val paint = Paint()
+            paint.isAntiAlias = true
+            paint.isFilterBitmap = true
+            paint.isDither = true
+
+            canvas.drawBitmap(resizedBitmap, leftPadding.toFloat(), topPadding.toFloat(), paint)
+
+            return outputBitmap
+        }
+
 
         fun imageProxyToBitmap(imageProxy: ImageProxy, rotation: Int): Bitmap {
             val yBuffer = imageProxy.planes[0].buffer // Y

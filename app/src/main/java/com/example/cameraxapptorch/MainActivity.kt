@@ -36,6 +36,10 @@ import com.example.cameraxapptorch.Yolov5Model.IMAGE_MEAN
 import com.example.cameraxapptorch.Yolov5Model.IMAGE_STD
 import com.example.cameraxapptorch.Yolov5Model.getIsTracking
 import com.example.cameraxapptorch.databinding.ActivityMainBinding
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import org.apache.commons.math3.linear.*
 import org.apache.commons.math3.optim.linear.*
 import org.tensorflow.lite.DataType
@@ -76,6 +80,10 @@ class MainActivity : AppCompatActivity() {
     private var counter = 0
 
     private lateinit var mediaRecorder: MediaRecorder
+
+    private var frameCounter = 0
+    private var saveFolder: File? = null
+    private var saveJob: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -179,11 +187,13 @@ class MainActivity : AppCompatActivity() {
         }, ContextCompat.getMainExecutor(this))
     }
 
+    @RequiresApi(Build.VERSION_CODES.S)
     private fun analyzer(imageProxy: ImageProxy) {
         val bitmap = ImageProcessor.imageProxyToBitmap(imageProxy,imageProxy.imageInfo.rotationDegrees)
 
         val startTime = SystemClock.uptimeMillis()
 
+//        var resizedBitmap = ImageProcessor.resizeImageWithPadding(bitmap,512,512)
         var resizedBitmap = if (Yolov5Model.getGrayscale()) {
             ImageProcessor.scaleAndGrayScale(bitmap,yolov5Detector.inputShape[1],yolov5Detector.inputShape[2])
         } else if (Yolov5Model.getHisteq()) {
@@ -198,18 +208,20 @@ class MainActivity : AppCompatActivity() {
                 yolov5Detector.inputShape[1],
                 yolov5Detector.inputShape[2])
         }
+//        viewBinding.imageView.setImageBitmap(resizedBitmap)
         yolov5Detector.createInputBuffer(resizedBitmap)
 
         executor.execute {
-            currentBitmap = bitmap
-            untrackedBoundingBoxes = yolov5Detector.inferenceAndPostProcess(bitmap.width,bitmap.height,resizedBitmap)
+            currentBitmap = resizedBitmap
+            untrackedBoundingBoxes = yolov5Detector.inferenceAndPostProcess(resizedBitmap.width,resizedBitmap.height,resizedBitmap)
 
-            for (box in untrackedBoundingBoxes) {
-                Log.d("BOXES", box.contentToString())
-            }
-
+//            for (box in untrackedBoundingBoxes) {
+//                Log.d("BOXES", box.contentToString())
+//            }
+//
             finalBoundingBoxes = if (getIsTracking()) {
-                sortTracker.updateSort(untrackedBoundingBoxes)
+                untrackedBoundingBoxes
+//                sortTracker.updateSort(untrackedBoundingBoxes)
             } else {
                 untrackedBoundingBoxes
             }
@@ -223,11 +235,12 @@ class MainActivity : AppCompatActivity() {
         Log.d("TIME SPENT", "$timeSpent ms")
     }
 
+    @RequiresApi(Build.VERSION_CODES.S)
     private fun recordFrame(bitmap: Bitmap) {
         try {
             // Start the recording if it's not already started
             if (!::mediaRecorder.isInitialized) {
-                mediaRecorder = MediaRecorder()
+                mediaRecorder = MediaRecorder(this)
                 mediaRecorder.setAudioSource(MediaRecorder.AudioSource.MIC)
                 mediaRecorder.setVideoSource(MediaRecorder.VideoSource.SURFACE)
                 mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
@@ -235,8 +248,8 @@ class MainActivity : AppCompatActivity() {
                 mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.HE_AAC)
                 mediaRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.HEVC)
                 mediaRecorder.setOutputFile(getVideoOutputFile())
-                mediaRecorder.setAudioEncodingBitRate(10000000)
-                mediaRecorder.setVideoEncodingBitRate(10000000)
+                mediaRecorder.setAudioEncodingBitRate(128000)
+                mediaRecorder.setVideoEncodingBitRate(2000000)
 
                 mediaRecorder.setVideoSize(bitmap.width, bitmap.height)
                 mediaRecorder.prepare()
@@ -262,11 +275,6 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to stop recording", e)
         }
-    }
-
-    fun drawResizedBitmapInImageView(resizedBitmap: Bitmap, imageView: ImageView) {
-        val drawable = BitmapDrawable(imageView.resources, resizedBitmap)
-        imageView.setImageDrawable(drawable)
     }
 
     private fun saveBoundingBoxes(file: File, boundingBoxes: List<FloatArray>, imageWidth: Int, imageHeight: Int) {
@@ -302,6 +310,48 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // Call this method to save the tracked bounding box, untracked bounding box, and image
+    private fun saveData(bitmap: Bitmap, finalBoundingBoxes: MutableList<FloatArray>, untrackedBoundingBoxes: MutableList<FloatArray>) {
+        // Increment frame counter
+        frameCounter++
+
+        // Create save folder if it doesn't exist
+        if (saveFolder == null) {
+            saveFolder = File(getExternalFilesDir(null), "${Yolov5Model.getFolderMain()}-${Yolov5Model.getFolderPrefix()}")
+            saveFolder!!.mkdirs()
+        }
+
+        // Cancel previous save job if it's still running
+        saveJob?.cancel()
+
+        // Start a new save job
+        saveJob = GlobalScope.launch(Dispatchers.IO) {
+            val currentTime = dateFormat.format(Date()).replace(":", ".")
+            val counter = frameCounter
+
+            // Save tracked bounding box data
+            val outputTxtFile = File(saveFolder, "$currentTime-${counter.toString().padStart(4, '0')}.txt")
+            saveBoundingBoxes(outputTxtFile, finalBoundingBoxes, bitmap.width, bitmap.height)
+
+            // Save image data
+            val outputPngFile = File(saveFolder, "$currentTime-${counter.toString().padStart(4, '0')}.jpg")
+            saveImage(outputPngFile, bitmap)
+
+            // Save untracked bounding box data (if needed)
+            if (Yolov5Model.getIsTracking() && Yolov5Model.getIsSaveUntracked()) {
+                val outputTxtFileUntracked = File(saveFolder, "$currentTime-${counter.toString().padStart(4, '0')}-untracked.txt")
+                saveBoundingBoxes(outputTxtFileUntracked, untrackedBoundingBoxes, bitmap.width, bitmap.height)
+            }
+        }
+    }
+
+    // Call this method when recording is stopped or paused to cancel any ongoing save job
+    private fun cancelSaveJob() {
+        saveJob?.cancel()
+        saveJob = null
+    }
+
+    @RequiresApi(Build.VERSION_CODES.S)
     private fun drawRectangleAndShow(bitmap: Bitmap) {
         mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(mutableBitmap)
@@ -309,11 +359,15 @@ class MainActivity : AppCompatActivity() {
             maskFilter = BlurMaskFilter(10f, BlurMaskFilter.Blur.NORMAL)
         }
         for (box in finalBoundingBoxes) {
+            Log.d("BOX", box.contentToString())
             val left = box[0].toInt()
             val top = box[1].toInt()
             val right = box[2].toInt()
             val bottom = box[3].toInt()
             val rect = Rect(left, top, right, bottom)
+            if (rect.width() <= 0 || rect.height() <= 0) {
+                continue
+            }
             val blurredRegion =
                 Bitmap.createBitmap(rect.width(), rect.height(), Bitmap.Config.ARGB_8888)
             val blurredCanvas = Canvas(blurredRegion)
@@ -334,18 +388,7 @@ class MainActivity : AppCompatActivity() {
                 recordFrame(mutableBitmap)
         }
         if (isCapture) {
-            counter += 1
-            val currentTime = dateFormat.format(Date()).replace(":", ".")
-            val folder = File(getExternalFilesDir(null), "${Yolov5Model.getFolderMain()}-${Yolov5Model.getFolderPrefix()}")
-            folder.mkdirs()
-            val outputTxtFile = File(folder,"$currentTime-${counter.toString().padStart(4,'0')}.txt")
-            val outputPngFile = File(folder,"$currentTime-${counter.toString().padStart(4,'0')}.jpg")
-            saveBoundingBoxes(outputTxtFile, finalBoundingBoxes, bitmap.width, bitmap.height) // Save bounding box data
-            saveImage(outputPngFile, bitmap) // Save image data
-            if (Yolov5Model.getIsTracking() && Yolov5Model.getIsSaveUntracked()) {
-                val outputTxtFileUntracked = File(folder, "$currentTime-${counter.toString().padStart(4,'0')}-untracked.txt")
-                saveBoundingBoxes(outputTxtFileUntracked, untrackedBoundingBoxes, bitmap.width, bitmap.height)
-            }
+            saveData(bitmap, finalBoundingBoxes, untrackedBoundingBoxes)
         }
     }
 
