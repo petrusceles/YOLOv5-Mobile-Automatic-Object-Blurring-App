@@ -127,9 +127,6 @@ class Sort(module: PyObject) {
                     }
                 }
             }
-//            for (tM in thresholdMatrix) {
-//                Log.d("T", tM.contentToString())
-//            }
 
             val a = findMaxRowAndColSum(thresholdMatrix)
 

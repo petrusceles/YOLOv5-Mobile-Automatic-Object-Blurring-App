@@ -1,6 +1,7 @@
 package com.example.cameraxapptorch
 
 import android.graphics.Bitmap
+import android.util.Log
 import com.example.cameraxapptorch.Yolov5Model.IMAGE_MEAN
 import com.example.cameraxapptorch.Yolov5Model.IMAGE_STD
 import org.tensorflow.lite.DataType
@@ -95,14 +96,13 @@ class Yolov5Detector (tfliteModel: MappedByteBuffer, options: Interpreter.Option
         val resizedWidth = inputShape[1]
         val resizedHeight = inputShape[1]
 
-        val scaleX = width.toFloat() / resizedWidth
-        val scaleY = height.toFloat() / resizedHeight
 
-        val xOffset = (resizedWidth - width.toFloat() / scaleX) / 2
-        val yOffset = (resizedHeight - height.toFloat() / scaleY) / 2
+        val originalHeightInResized = min(height.toFloat() * (resizedWidth.toFloat()/width.toFloat()), resizedHeight.toFloat())
 
 
+        val originalWidthInResized = min(width.toFloat() * (resizedHeight.toFloat()/height.toFloat()), resizedWidth.toFloat())
 
+        Log.d("RESIZED SIZE", "W ${originalWidthInResized}")
 
         for (i in 0 until outputShape[1]) {
             val objScore = out[i][4]
@@ -110,10 +110,12 @@ class Yolov5Detector (tfliteModel: MappedByteBuffer, options: Interpreter.Option
                 if (out[i][2] > 0.9f && out[i][3] > 0.9f) {
                     continue
                 }
-                val xPos = out[i][0] * width
-                val yPos = out[i][1] * height
-                val widthBox = out[i][2] * width
-                val heightBox = out[i][3] * height
+                val xPos = ((2*resizedWidth*out[i][0] - resizedWidth + originalWidthInResized)*width)/(2*originalWidthInResized)
+                val yPos = ((2*resizedHeight*out[i][1] - resizedHeight + originalHeightInResized)*height)/(2*originalHeightInResized)
+
+                val widthBox = ((out[i][2] * resizedWidth)/originalWidthInResized)*width*1.3f
+                val heightBox = ((out[i][3] * resizedHeight)/originalHeightInResized)*height*1.3f
+
                 val box = floatArrayOf(
                     max(0f, (xPos - widthBox / 2)),
                     max(0f, (yPos - heightBox / 2)),

@@ -5,12 +5,14 @@ import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.graphics.*
 import android.graphics.drawable.BitmapDrawable
+import android.media.EncoderProfiles
 import android.media.MediaRecorder
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.provider.MediaStore.Audio.Media
 import android.util.Log
+import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.widget.ImageView
@@ -84,6 +86,9 @@ class MainActivity : AppCompatActivity() {
     private var frameCounter = 0
     private var saveFolder: File? = null
     private var saveJob: Job? = null
+    private var surface: Surface? = null
+
+
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -125,7 +130,7 @@ class MainActivity : AppCompatActivity() {
             if (isCapture) {
                 viewBinding.captureButton.text = "Stop Capture"
             } else {
-                counter = 0
+                cancelSaveJob()
                 viewBinding.captureButton.text = "Start Capture"
             }
         }
@@ -136,7 +141,6 @@ class MainActivity : AppCompatActivity() {
             if (isRecord) {
                 viewBinding.recordButton.text = "Stop Record"
             } else {
-                counter = 0
                 viewBinding.recordButton.text = "Start Record"
                 stopRecording()
             }
@@ -162,6 +166,7 @@ class MainActivity : AppCompatActivity() {
             }.toTypedArray()
     }
 
+    @RequiresApi(Build.VERSION_CODES.S)
     private fun startCamera() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
@@ -208,20 +213,19 @@ class MainActivity : AppCompatActivity() {
                 yolov5Detector.inputShape[1],
                 yolov5Detector.inputShape[2])
         }
-//        viewBinding.imageView.setImageBitmap(resizedBitmap)
+//        viewBinding.imageView.setImageBitmap(bitmap)
         yolov5Detector.createInputBuffer(resizedBitmap)
 
         executor.execute {
-            currentBitmap = resizedBitmap
-            untrackedBoundingBoxes = yolov5Detector.inferenceAndPostProcess(resizedBitmap.width,resizedBitmap.height,resizedBitmap)
+            currentBitmap = bitmap
+            untrackedBoundingBoxes = yolov5Detector.inferenceAndPostProcess(bitmap.width,bitmap.height,resizedBitmap)
 
-//            for (box in untrackedBoundingBoxes) {
-//                Log.d("BOXES", box.contentToString())
-//            }
-//
+            for (box in untrackedBoundingBoxes) {
+                Log.d("BOXES", box.contentToString())
+            }
+
             finalBoundingBoxes = if (getIsTracking()) {
-                untrackedBoundingBoxes
-//                sortTracker.updateSort(untrackedBoundingBoxes)
+                sortTracker.updateSort(untrackedBoundingBoxes)
             } else {
                 untrackedBoundingBoxes
             }
@@ -230,6 +234,9 @@ class MainActivity : AppCompatActivity() {
 
         currentBitmap?.let { drawRectangleAndShow(it) }
 
+//        if (isCapture) {
+//            saveData(bitmap, finalBoundingBoxes, untrackedBoundingBoxes)
+//        }
         imageProxy.close()
         val timeSpent = (SystemClock.uptimeMillis() - startTime).toInt()
         Log.d("TIME SPENT", "$timeSpent ms")
@@ -237,33 +244,39 @@ class MainActivity : AppCompatActivity() {
 
     @RequiresApi(Build.VERSION_CODES.S)
     private fun recordFrame(bitmap: Bitmap) {
+        var startTime = SystemClock.uptimeMillis()
         try {
             // Start the recording if it's not already started
             if (!::mediaRecorder.isInitialized) {
+                Log.d("RECORD", "START")
                 mediaRecorder = MediaRecorder(this)
                 mediaRecorder.setAudioSource(MediaRecorder.AudioSource.MIC)
                 mediaRecorder.setVideoSource(MediaRecorder.VideoSource.SURFACE)
                 mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
 
                 mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.HE_AAC)
-                mediaRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.HEVC)
-                mediaRecorder.setOutputFile(getVideoOutputFile())
-                mediaRecorder.setAudioEncodingBitRate(128000)
-                mediaRecorder.setVideoEncodingBitRate(2000000)
+                mediaRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
+                mediaRecorder.setAudioEncodingBitRate(64000)
+                mediaRecorder.setVideoEncodingBitRate(10000000)
+                mediaRecorder.setVideoFrameRate(24)
+//                mediaRecorder.setCaptureRate(20.0)
 
                 mediaRecorder.setVideoSize(bitmap.width, bitmap.height)
+                mediaRecorder.setOutputFile(getVideoOutputFile())
                 mediaRecorder.prepare()
                 mediaRecorder.start()
+                surface = mediaRecorder.surface
             }
-
-            // Write the bitmap data to the media recorder surface
-                val surface = mediaRecorder.surface
-                val canvas = surface.lockCanvas(null)
-                canvas.drawBitmap(bitmap, 0f, 0f, null)
-                surface.unlockCanvasAndPost(canvas)
+            // Write the bitmap data to the media rechow order surface
+            val canvas = surface?.lockCanvas(null)
+            canvas?.drawBitmap(bitmap, 0f, 0f, null)
+            surface?.unlockCanvasAndPost(canvas)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to record frame", e)
         }
+
+        val timeSpent = (SystemClock.uptimeMillis() - startTime).toInt()
+        Log.d("TIME SPENT RECORD", "$timeSpent ms")
     }
 
     private fun stopRecording() {
