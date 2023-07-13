@@ -48,7 +48,9 @@ class Sort(module: PyObject) {
             if (tracker.timeSinceUpdate > Yolov5Model.getMaxTrackerAge()) {
                 this.objectTrackers.removeAt(i)
             } else {
-                returnedBBox.add(bbox.plus((tracker.id + 1).toFloat()))
+                if (tracker.hitStreak > 1 || frameCount <= 1) {
+                    returnedBBox.add(bbox.plus((tracker.id + 1).toFloat()))
+                }
             }
         }
         return returnedBBox

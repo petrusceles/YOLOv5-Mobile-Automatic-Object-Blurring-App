@@ -16,6 +16,7 @@ import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.widget.ImageView
+import android.widget.Toast
 import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.*
@@ -79,7 +80,6 @@ class MainActivity : AppCompatActivity() {
     private var isCapture = false
     private var isRecord = false
 
-    private var counter = 0
 
     private lateinit var mediaRecorder: MediaRecorder
 
@@ -88,8 +88,15 @@ class MainActivity : AppCompatActivity() {
     private var saveJob: Job? = null
     private var surface: Surface? = null
 
+    private var captureCounter = 0
+
+    private var textFileName: String? = null
+
+    private var untrackedBoundingBoxesText = mutableListOf<MutableList<String>>()
+    private var boundingBoxesText = mutableListOf<MutableList<String>>()
 
 
+    @RequiresApi(Build.VERSION_CODES.S)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         viewBinding = ActivityMainBinding.inflate(layoutInflater)
@@ -259,10 +266,11 @@ class MainActivity : AppCompatActivity() {
                 mediaRecorder.setAudioEncodingBitRate(64000)
                 mediaRecorder.setVideoEncodingBitRate(10000000)
                 mediaRecorder.setVideoFrameRate(24)
-//                mediaRecorder.setCaptureRate(20.0)
 
                 mediaRecorder.setVideoSize(bitmap.width, bitmap.height)
-                mediaRecorder.setOutputFile(getVideoOutputFile())
+                val videoOutputFile = getVideoOutputFile()
+                textFileName = videoOutputFile.second
+                mediaRecorder.setOutputFile(videoOutputFile.first)
                 mediaRecorder.prepare()
                 mediaRecorder.start()
                 surface = mediaRecorder.surface
@@ -271,6 +279,23 @@ class MainActivity : AppCompatActivity() {
             val canvas = surface?.lockCanvas(null)
             canvas?.drawBitmap(bitmap, 0f, 0f, null)
             surface?.unlockCanvasAndPost(canvas)
+
+
+            if (saveFolder == null) {
+                saveFolder = File(getExternalFilesDir(null), "${Yolov5Model.getFolderMain()}-${Yolov5Model.getFolderPrefix()}")
+                saveFolder!!.mkdirs()
+            }
+
+            if (Yolov5Model.getIsSaveUntracked()) {
+                val boundingBoxesTextValues = collectBoundingBoxesOnRecord(finalBoundingBoxes,bitmap.width, bitmap.height)
+                boundingBoxesText.add(boundingBoxesTextValues)
+                if (Yolov5Model.getIsTracking()) {
+                    val untrackedBoundingBoxesTextValues = collectBoundingBoxesOnRecord(untrackedBoundingBoxes,bitmap.width, bitmap.height)
+                    untrackedBoundingBoxesText.add(untrackedBoundingBoxesTextValues)
+                }
+            }
+
+
         } catch (e: Exception) {
             Log.e(TAG, "Failed to record frame", e)
         }
@@ -288,6 +313,27 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to stop recording", e)
         }
+        var captureCounter = 0
+        var captureCounterUntracked = 0
+        if (Yolov5Model.getIsSaveUntracked()) {
+            for (boundingBoxesFrame in boundingBoxesText) {
+                saveBoundingBoxesTextOnRecord(File(saveFolder, "${textFileName}-${captureCounter.toString().padStart(4, '0')}.txt"), boundingBoxesFrame)
+                captureCounter++
+            }
+            if (Yolov5Model.getIsTracking()) {
+                for (untrackedBoundingBoxesFrame in untrackedBoundingBoxesText) {
+                    saveBoundingBoxesTextOnRecord(File(saveFolder, "${textFileName}-${captureCounterUntracked.toString().padStart(4, '0')}-untracked.txt"), untrackedBoundingBoxesFrame)
+                    captureCounterUntracked++
+                }
+            }
+        }
+        showToast("DONE")
+        boundingBoxesText.clear()
+        untrackedBoundingBoxesText.clear()
+    }
+
+    private fun showToast(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
     private fun saveBoundingBoxes(file: File, boundingBoxes: List<FloatArray>, imageWidth: Int, imageHeight: Int) {
@@ -311,6 +357,59 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Log.e(TAG, "Error saving bounding box data: ${e.message}")
         }
+    }
+
+    private fun saveBoundingBoxesOnRecord(file: File, boundingBoxes: List<FloatArray>, imageWidth: Int, imageHeight: Int,frame: Int) {
+        try {
+            val fileOutputStream = FileOutputStream(file)
+            for (box in boundingBoxes) {
+                val x1 = box[0]
+                val y1 = box[1]
+                val x2 = box[2]
+                val y2 = box[3]
+
+                val center_x = ((x1 + x2) / 2)/imageWidth
+                val center_y = ((y1 + y2) / 2)/imageHeight
+                val width = (x2 - x1)/imageWidth
+                val height = (y2 - y1)/imageHeight
+
+                val boundingBoxText = "$frame $center_x $center_y $width $height\n"
+                fileOutputStream.write(boundingBoxText.toByteArray())
+            }
+            fileOutputStream.close()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error saving bounding box data: ${e.message}")
+        }
+    }
+
+    private fun saveBoundingBoxesTextOnRecord(file: File, boundingBoxes: List<String>) {
+        try {
+            val fileOutputStream = FileOutputStream(file)
+            for (box in boundingBoxes) {
+                fileOutputStream.write(box.toByteArray())
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error saving bounding box data: ${e.message}")
+        }
+    }
+
+    private fun collectBoundingBoxesOnRecord(boundingBoxes: List<FloatArray>, imageWidth: Int, imageHeight: Int): MutableList<String> {
+        val boundingBoxesText = mutableListOf<String>()
+        for (box in boundingBoxes) {
+            val x1 = box[0]
+            val y1 = box[1]
+            val x2 = box[2]
+            val y2 = box[3]
+
+            val center_x = ((x1 + x2) / 2)/imageWidth
+            val center_y = ((y1 + y2) / 2)/imageHeight
+            val width = (x2 - x1)/imageWidth
+            val height = (y2 - y1)/imageHeight
+
+            val boundingBoxText = "0 $center_x $center_y $width $height\n"
+            boundingBoxesText.add(boundingBoxText)
+        }
+        return boundingBoxesText
     }
 
     private fun saveImage(file: File, bitmap: Bitmap) {
@@ -357,7 +456,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
-
     // Call this method when recording is stopped or paused to cancel any ongoing save job
     private fun cancelSaveJob() {
         saveJob?.cancel()
@@ -371,6 +469,11 @@ class MainActivity : AppCompatActivity() {
         val blurPaint = Paint().apply {
             maskFilter = BlurMaskFilter(10f, BlurMaskFilter.Blur.NORMAL)
         }
+        val rectPaint = Paint().apply {
+            color = Color.GREEN
+            strokeWidth = 2.0f
+            style = Paint.Style.STROKE
+        }
         for (box in finalBoundingBoxes) {
             Log.d("BOX", box.contentToString())
             val left = box[0].toInt()
@@ -381,24 +484,30 @@ class MainActivity : AppCompatActivity() {
             if (rect.width() <= 0 || rect.height() <= 0) {
                 continue
             }
-            val blurredRegion =
-                Bitmap.createBitmap(rect.width(), rect.height(), Bitmap.Config.ARGB_8888)
-            val blurredCanvas = Canvas(blurredRegion)
-            blurredCanvas.drawBitmap(bitmap, -left.toFloat(), -top.toFloat(), null)
-            val rs = RenderScript.create(this)
-            val blurInput = Allocation.createFromBitmap(rs, blurredRegion)
-            val blurOutput = Allocation.createTyped(rs, blurInput.type)
-            val blurScript = ScriptIntrinsicBlur.create(rs, Element.U8_4(rs))
-            blurScript.setRadius(20f)
-            blurScript.setInput(blurInput)
-            blurScript.forEach(blurOutput)
-            blurOutput.copyTo(blurredRegion)
-            rs.destroy()
-            canvas.drawBitmap(blurredRegion,left.toFloat(), top.toFloat(), blurPaint)
+            canvas.drawRect(rect,rectPaint)
+
+//            val blurredRegion =
+//                Bitmap.createBitmap(rect.width(), rect.height(), Bitmap.Config.ARGB_8888)
+//            val blurredCanvas = Canvas(blurredRegion)
+//            blurredCanvas.drawBitmap(bitmap, -left.toFloat(), -top.toFloat(), null)
+//            val rs = RenderScript.create(this)
+//            val blurInput = Allocation.createFromBitmap(rs, blurredRegion)
+//            val blurOutput = Allocation.createTyped(rs, blurInput.type)
+//            val blurScript = ScriptIntrinsicBlur.create(rs, Element.U8_4(rs))
+//            blurScript.setRadius(20f)
+//            blurScript.setInput(blurInput)
+//            blurScript.forEach(blurOutput)
+//            blurOutput.copyTo(blurredRegion)
+//            rs.destroy()
+//            canvas.drawBitmap(blurredRegion,left.toFloat(), top.toFloat(), blurPaint)
         }
         viewBinding.imageView.setImageBitmap(mutableBitmap)
         if (isRecord) {
+            if (Yolov5Model.getIsSaveUntracked()) {
+                recordFrame(bitmap)
+            } else {
                 recordFrame(mutableBitmap)
+            }
         }
         if (isCapture) {
             saveData(bitmap, finalBoundingBoxes, untrackedBoundingBoxes)
@@ -410,11 +519,13 @@ class MainActivity : AppCompatActivity() {
             baseContext, it) == PackageManager.PERMISSION_GRANTED
     }
 
-    private fun getVideoOutputFile() : File {
+
+
+    private fun getVideoOutputFile() : Pair<File,String> {
         val currentTime = dateFormat.format(Date()).replace(":", ".")
-        val folder = File(getExternalFilesDir(null), "${Yolov5Model.getFolderMain()}-${Yolov5Model.getFolderPrefix()}-Video")
+        val folder = File(getExternalFilesDir(null), "${Yolov5Model.getFolderMain()}-${Yolov5Model.getFolderPrefix()}-video")
         folder.mkdirs()
-        val outputMp4File = File(folder,"$currentTime-${counter.toString().padStart(4,'0')}.mp4")
-        return outputMp4File
+        val outputMp4File = File(folder,"$currentTime.mp4")
+        return Pair(outputMp4File,currentTime)
     }
 }
