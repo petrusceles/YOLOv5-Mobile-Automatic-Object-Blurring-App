@@ -111,7 +111,7 @@ class KalmanBoxTracker(
     private var history = mutableListOf<FloatArray>()
     private var hits :Int = 0
     var hitStreak: Int = 0
-    private var age :Int = 0
+    var age :Int = 0
     fun predict(): FloatArray {
         if ((kalmanFilter.stateEstimation[6] + kalmanFilter.stateEstimation[2]) <= 0) {
             kalmanFilter.stateEstimation[6] *= 0.0

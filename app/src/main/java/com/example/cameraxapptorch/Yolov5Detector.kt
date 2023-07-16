@@ -213,7 +213,7 @@ class Yolov5Detector (tfliteModel: MappedByteBuffer, options: Interpreter.Option
         } else {
             untrackedBoundingBoxes
         }
-        currentBitmap?.let { drawRectangleAndShow(it) }
+        currentBitmap.let { drawRectangleAndShow(it) }
 
 //        inputBufferProcessing.clear()
         val timeSpent = (SystemClock.uptimeMillis() - startTime).toInt()
@@ -222,8 +222,8 @@ class Yolov5Detector (tfliteModel: MappedByteBuffer, options: Interpreter.Option
 
     @RequiresApi(Build.VERSION_CODES.S)
     private fun drawRectangleAndShow(bitmap: Bitmap) {
-        mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true)
-        val canvas = Canvas(mutableBitmap)
+        var mutableBitmapTemp = bitmap.copy(Bitmap.Config.ARGB_8888, true)
+        val canvas = Canvas(mutableBitmapTemp)
         val blurPaint = Paint().apply {
             maskFilter = BlurMaskFilter(7f, BlurMaskFilter.Blur.NORMAL)
         }
@@ -258,6 +258,7 @@ class Yolov5Detector (tfliteModel: MappedByteBuffer, options: Interpreter.Option
             rs.destroy()
             canvas.drawBitmap(blurredRegion,left.toFloat(), top.toFloat(), blurPaint)
         }
+        mutableBitmap = mutableBitmapTemp
     }
 
     private fun nonMaxSuppression(
