@@ -30,6 +30,10 @@ class ImageProcessor {
             return resizeImageWithPadding(bitmap,width,height)
         }
 
+        fun scaleStretch(bitmap: Bitmap, width: Int, height: Int): Bitmap {
+            return Bitmap.createScaledBitmap(bitmap,width,height,false)
+        }
+
         fun convertToGrayscale(bitmap: Bitmap): Bitmap {
             // Create a mutable bitmap with the same width and height as the original bitmap
             val grayscaleBitmap = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
@@ -106,14 +110,14 @@ class ImageProcessor {
             val canvas = Canvas(outputBitmap)
 
             // Fill the entire output bitmap with the padding color
-            canvas.drawColor(Color.rgb(0,0,0))
+            canvas.drawColor(Color.rgb(114,114,114))
 
-            val paint = Paint()
-            paint.isAntiAlias = true
-            paint.isFilterBitmap = true
-            paint.isDither = true
+//            val paint = Paint()
+//            paint.isAntiAlias = true
+//            paint.isFilterBitmap = true
+//            paint.isDither = true
 
-            canvas.drawBitmap(resizedBitmap, leftPadding.toFloat(), topPadding.toFloat(), paint)
+            canvas.drawBitmap(resizedBitmap, leftPadding.toFloat(), topPadding.toFloat(), null)
 
             return outputBitmap
         }

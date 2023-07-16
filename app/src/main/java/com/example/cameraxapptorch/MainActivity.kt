@@ -39,10 +39,15 @@ import com.example.cameraxapptorch.Yolov5Model.IMAGE_MEAN
 import com.example.cameraxapptorch.Yolov5Model.IMAGE_STD
 import com.example.cameraxapptorch.Yolov5Model.getIsTracking
 import com.example.cameraxapptorch.databinding.ActivityMainBinding
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.apache.commons.math3.linear.*
 import org.apache.commons.math3.optim.linear.*
 import org.tensorflow.lite.DataType
@@ -65,18 +70,10 @@ import kotlin.math.min
 class MainActivity : AppCompatActivity() {
     private lateinit var viewBinding: ActivityMainBinding
     private lateinit var cameraExecutor: ExecutorService
-    private val executor = Executors.newSingleThreadExecutor()
-    private val recorderExecutor = Executors.newSingleThreadExecutor()
     private lateinit var yolov5Detector: Yolov5Detector
     @SuppressLint("SimpleDateFormat")
     private val dateFormat = SimpleDateFormat("yyyyMMdd_HHmmss")
 
-    private var currentBitmap: Bitmap? = null
-    private lateinit var mutableBitmap: Bitmap
-    private lateinit var sortTracker: Sort
-
-    private var finalBoundingBoxes: MutableList<FloatArray> = mutableListOf()
-    private var untrackedBoundingBoxes: MutableList<FloatArray> = mutableListOf()
     private var isCapture = false
     private var isRecord = false
 
@@ -90,10 +87,18 @@ class MainActivity : AppCompatActivity() {
 
     private var captureCounter = 0
 
+    private var startShowing = false
+
+    private val scope = CoroutineScope(Dispatchers.Default)
+
     private var textFileName: String? = null
 
     private var untrackedBoundingBoxesText = mutableListOf<MutableList<String>>()
     private var boundingBoxesText = mutableListOf<MutableList<String>>()
+    private lateinit var originalBitmap: Bitmap
+
+    private var preprocessingRun = false
+    private var processingRun = false
 
 
     @RequiresApi(Build.VERSION_CODES.S)
@@ -122,14 +127,11 @@ class MainActivity : AppCompatActivity() {
 
         options.useNNAPI = true
         options.numThreads = 2
-        yolov5Detector = Yolov5Detector(tfliteModel,options)
-
-        if (!Python.isStarted()) {
-            Python.start(AndroidPlatform(this))
-        }
-
-        val py = Python.getInstance()
-        sortTracker = Sort(py.getModule("lsa"))
+        yolov5Detector = Yolov5Detector(tfliteModel,options, this)
+//
+//        if (!Python.isStarted()) {
+//            Python.start(AndroidPlatform(this))
+//        }
 
 
         viewBinding.captureButton.setOnClickListener {
@@ -141,7 +143,6 @@ class MainActivity : AppCompatActivity() {
                 viewBinding.captureButton.text = "Start Capture"
             }
         }
-
 
         viewBinding.recordButton.setOnClickListener {
             isRecord = !isRecord
@@ -199,54 +200,77 @@ class MainActivity : AppCompatActivity() {
         }, ContextCompat.getMainExecutor(this))
     }
 
+
+
     @RequiresApi(Build.VERSION_CODES.S)
     private fun analyzer(imageProxy: ImageProxy) {
-        val bitmap = ImageProcessor.imageProxyToBitmap(imageProxy,imageProxy.imageInfo.rotationDegrees)
 
         val startTime = SystemClock.uptimeMillis()
-
-//        var resizedBitmap = ImageProcessor.resizeImageWithPadding(bitmap,512,512)
-        var resizedBitmap = if (Yolov5Model.getGrayscale()) {
-            ImageProcessor.scaleAndGrayScale(bitmap,yolov5Detector.inputShape[1],yolov5Detector.inputShape[2])
-        } else if (Yolov5Model.getHisteq()) {
-            ImageProcessor.scaleAndHisteq(
-                bitmap,
-                yolov5Detector.inputShape[1],
-                yolov5Detector.inputShape[2]
-            )
-        } else {
-            ImageProcessor.scaleOnly(
-                bitmap,
-                yolov5Detector.inputShape[1],
-                yolov5Detector.inputShape[2])
-        }
-//        viewBinding.imageView.setImageBitmap(bitmap)
-        yolov5Detector.createInputBuffer(resizedBitmap)
-
-        executor.execute {
-            currentBitmap = bitmap
-            untrackedBoundingBoxes = yolov5Detector.inferenceAndPostProcess(bitmap.width,bitmap.height,resizedBitmap)
-
-            for (box in untrackedBoundingBoxes) {
-                Log.d("BOXES", box.contentToString())
+        scope.launch {
+            val block0 = async {
+                originalBitmap = ImageProcessor.imageProxyToBitmap(imageProxy, imageProxy.imageInfo.rotationDegrees)
+            }
+            val block1 = async {
+                Log.d("BITMAP INITIALIZATION", "ORIGINAL " + ::originalBitmap.isInitialized.toString())
+                if (::originalBitmap.isInitialized) {
+                    val resizedBitmap = if (Yolov5Model.getGrayscale()) {
+                        ImageProcessor.scaleAndGrayScale(
+                            originalBitmap,
+                            yolov5Detector.inputShape[1],
+                            yolov5Detector.inputShape[2]
+                        )
+                    } else if (Yolov5Model.getHisteq()) {
+                        ImageProcessor.scaleAndHisteq(
+                            originalBitmap,
+                            yolov5Detector.inputShape[1],
+                            yolov5Detector.inputShape[2]
+                        )
+                    } else {
+                        ImageProcessor.scaleOnly(
+                            originalBitmap,
+                            yolov5Detector.inputShape[1],
+                            yolov5Detector.inputShape[2]
+                        )
+                    }
+                    yolov5Detector.setCurrentBitmap(originalBitmap)
+                    yolov5Detector.createInputBuffer(resizedBitmap)
+                }
             }
 
-            finalBoundingBoxes = if (getIsTracking()) {
-                sortTracker.updateSort(untrackedBoundingBoxes)
-            } else {
-                untrackedBoundingBoxes
+            val block2 = async {
+                Log.d("BITMAP INITIALIZATION", "CURRENT " + yolov5Detector.isCurrentBitmapInitialized().toString())
+                if (yolov5Detector.isCurrentBitmapInitialized()) {
+                    yolov5Detector.inferenceAndPostProcess()
+                    startShowing = true
+                }
             }
 
+            awaitAll(block0,block1, block2)
+            if (startShowing) {
+                withContext(Dispatchers.Main) {
+                    viewBinding.imageView.setImageBitmap(yolov5Detector.getMutableBitmap())
+                    if (isRecord) {
+                        if (Yolov5Model.getIsSaveUntracked()) {
+                            recordFrame(yolov5Detector.getCurrentBitmap())
+                        } else {
+                            recordFrame(yolov5Detector.getMutableBitmap())
+                        }
+                    }
+                    if (isCapture) {
+                        saveData(
+                            yolov5Detector.getCurrentBitmap(),
+                            yolov5Detector.getFinalBoundingBoxes(),
+                            yolov5Detector.getUntrackedBoundingBoxes()
+                        )
+                    }
+                }
+            }
+
+            val timeSpent = (SystemClock.uptimeMillis() - startTime).toInt()
+            Log.d("TIME SPENT", "$timeSpent ms")
+
+            imageProxy.close()
         }
-
-        currentBitmap?.let { drawRectangleAndShow(it) }
-
-//        if (isCapture) {
-//            saveData(bitmap, finalBoundingBoxes, untrackedBoundingBoxes)
-//        }
-        imageProxy.close()
-        val timeSpent = (SystemClock.uptimeMillis() - startTime).toInt()
-        Log.d("TIME SPENT", "$timeSpent ms")
     }
 
     @RequiresApi(Build.VERSION_CODES.S)
@@ -264,9 +288,9 @@ class MainActivity : AppCompatActivity() {
                 mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.HE_AAC)
                 mediaRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
                 mediaRecorder.setAudioEncodingBitRate(64000)
-                mediaRecorder.setVideoEncodingBitRate(10000000)
-                mediaRecorder.setVideoFrameRate(24)
-
+                mediaRecorder.setVideoEncodingBitRate(5000000)
+                mediaRecorder.setVideoFrameRate(120)
+                mediaRecorder.setCaptureRate(120.0)
                 mediaRecorder.setVideoSize(bitmap.width, bitmap.height)
                 val videoOutputFile = getVideoOutputFile()
                 textFileName = videoOutputFile.second
@@ -287,10 +311,10 @@ class MainActivity : AppCompatActivity() {
             }
 
             if (Yolov5Model.getIsSaveUntracked()) {
-                val boundingBoxesTextValues = collectBoundingBoxesOnRecord(finalBoundingBoxes,bitmap.width, bitmap.height)
+                val boundingBoxesTextValues = collectBoundingBoxesOnRecord(yolov5Detector.getFinalBoundingBoxes(),bitmap.width, bitmap.height)
                 boundingBoxesText.add(boundingBoxesTextValues)
                 if (Yolov5Model.getIsTracking()) {
-                    val untrackedBoundingBoxesTextValues = collectBoundingBoxesOnRecord(untrackedBoundingBoxes,bitmap.width, bitmap.height)
+                    val untrackedBoundingBoxesTextValues = collectBoundingBoxesOnRecord(yolov5Detector.getUntrackedBoundingBoxes(),bitmap.width, bitmap.height)
                     untrackedBoundingBoxesText.add(untrackedBoundingBoxesTextValues)
                 }
             }
@@ -462,30 +486,29 @@ class MainActivity : AppCompatActivity() {
         saveJob = null
     }
 
-    @RequiresApi(Build.VERSION_CODES.S)
-    private fun drawRectangleAndShow(bitmap: Bitmap) {
-        mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true)
-        val canvas = Canvas(mutableBitmap)
-        val blurPaint = Paint().apply {
-            maskFilter = BlurMaskFilter(10f, BlurMaskFilter.Blur.NORMAL)
-        }
-        val rectPaint = Paint().apply {
-            color = Color.GREEN
-            strokeWidth = 2.0f
-            style = Paint.Style.STROKE
-        }
-        for (box in finalBoundingBoxes) {
-            Log.d("BOX", box.contentToString())
-            val left = box[0].toInt()
-            val top = box[1].toInt()
-            val right = box[2].toInt()
-            val bottom = box[3].toInt()
-            val rect = Rect(left, top, right, bottom)
-            if (rect.width() <= 0 || rect.height() <= 0) {
-                continue
-            }
-            canvas.drawRect(rect,rectPaint)
-
+//    @RequiresApi(Build.VERSION_CODES.S)
+//    private fun drawRectangleAndShow(bitmap: Bitmap) {
+//        mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true)
+//        val canvas = Canvas(mutableBitmap)
+//        val blurPaint = Paint().apply {
+//            maskFilter = BlurMaskFilter(10f, BlurMaskFilter.Blur.NORMAL)
+//        }
+//        val rectPaint = Paint().apply {
+//            color = Color.GREEN
+//            strokeWidth = 2.0f
+//            style = Paint.Style.STROKE
+//        }
+//        for (box in finalBoundingBoxes) {
+//            Log.d("BOX", box.contentToString())
+//            val left = box[0].toInt()
+//            val top = box[1].toInt()
+//            val right = box[2].toInt()
+//            val bottom = box[3].toInt()
+//            val rect = Rect(left, top, right, bottom)
+//            if (rect.width() <= 0 || rect.height() <= 0) {
+//                continue
+//            }
+//
 //            val blurredRegion =
 //                Bitmap.createBitmap(rect.width(), rect.height(), Bitmap.Config.ARGB_8888)
 //            val blurredCanvas = Canvas(blurredRegion)
@@ -500,19 +523,19 @@ class MainActivity : AppCompatActivity() {
 //            blurOutput.copyTo(blurredRegion)
 //            rs.destroy()
 //            canvas.drawBitmap(blurredRegion,left.toFloat(), top.toFloat(), blurPaint)
-        }
-        viewBinding.imageView.setImageBitmap(mutableBitmap)
-        if (isRecord) {
-            if (Yolov5Model.getIsSaveUntracked()) {
-                recordFrame(bitmap)
-            } else {
-                recordFrame(mutableBitmap)
-            }
-        }
-        if (isCapture) {
-            saveData(bitmap, finalBoundingBoxes, untrackedBoundingBoxes)
-        }
-    }
+//        }
+//        viewBinding.imageView.setImageBitmap(mutableBitmap)
+//        if (isRecord) {
+//            if (Yolov5Model.getIsSaveUntracked()) {
+//                recordFrame(bitmap)
+//            } else {
+//                recordFrame(mutableBitmap)
+//            }
+//        }
+//        if (isCapture) {
+//            saveData(bitmap, finalBoundingBoxes, untrackedBoundingBoxes)
+//        }
+//    }
 
     private fun allPermissionsGranted() = REQUIRED_PERMISSIONS.all {
         ContextCompat.checkSelfPermission(
