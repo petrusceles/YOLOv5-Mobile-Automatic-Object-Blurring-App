@@ -21,8 +21,10 @@
 ## UI
 - Configuration Page
 
-![Copy of DesainSistemKonfigurasi](https://github.com/petrusceles/CameraXAppTorch/assets/90450258/a865ba7a-7639-4d15-a823-8b58e932dbd0)
+![Copy of DesainSistemKonfigurasi](https://github.com/petrusceles/Automatic-Object-Blurring-App/assets/90450258/52893793-9289-4e8d-8f3f-a5fe40895979)
+
 
 - Camera Page
 
-![CameraUI](https://github.com/petrusceles/CameraXAppTorch/assets/90450258/3540ce50-c45e-45ba-843c-98ccdb0b48a7)
+![CameraUI](https://github.com/petrusceles/Automatic-Object-Blurring-App/assets/90450258/9399b5a7-1ef2-41d6-811f-310fa50672c6)
+
