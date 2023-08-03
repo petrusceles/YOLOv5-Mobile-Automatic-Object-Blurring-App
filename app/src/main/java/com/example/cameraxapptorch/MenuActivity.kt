@@ -25,38 +25,10 @@ import android.util.Log
 import androidx.core.widget.addTextChangedListener
 import androidx.core.widget.doOnTextChanged
 import com.example.cameraxapptorch.databinding.ActivityMainBinding
-@Suppress("DEPRECATION")
 class MenuActivity : ComponentActivity() {
     private lateinit var viewBinding: ActivityMenuBinding
     private var fileExtension = ""
     private lateinit var tfliteModel: MappedByteBuffer
-
-    private var activityResultLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        if (it.resultCode == Activity.RESULT_OK && it.data != null) {
-            val selectedFileUri: Uri? = it.data?.data
-            if (selectedFileUri != null) {
-                fileExtension = getFileName(selectedFileUri)!!
-                getFilenameWithoutExtensionFromUri(selectedFileUri)?.let {
-                    Yolov5Model.setFolderMain(
-                        it
-                    )
-                }
-                val fileDescriptor = contentResolver.openFileDescriptor(selectedFileUri, "r")
-                if (fileDescriptor != null) {
-                    val fileInputStream = FileInputStream(fileDescriptor.fileDescriptor)
-                    val fileChannel = fileInputStream.channel
-                    val startOffset = 0L
-                    val declaredLength = fileDescriptor.statSize
-                    tfliteModel = fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength)
-                    showToast("File uploaded successfully!")
-                } else {
-                    showToast("Error opening the file")
-                }
-            } else {
-                showToast("File selection canceled")
-            }
-        }
-    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         viewBinding = ActivityMenuBinding.inflate(layoutInflater)
@@ -102,6 +74,46 @@ class MenuActivity : ComponentActivity() {
             }
         }
     }
+    private var activityResultLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        if (it.resultCode == Activity.RESULT_OK && it.data != null) {
+            val selectedFileUri: Uri? = it.data?.data
+            if (selectedFileUri != null) {
+                fileExtension = getFileName(selectedFileUri)!!
+                getFilenameWithoutExtensionFromUri(selectedFileUri)?.let {
+                    Yolov5Model.setFolderMain(
+                        it
+                    )
+                }
+                val fileDescriptor = contentResolver.openFileDescriptor(selectedFileUri, "r")
+                if (fileDescriptor != null) {
+                    val fileInputStream = FileInputStream(fileDescriptor.fileDescriptor)
+                    val fileChannel = fileInputStream.channel
+                    val startOffset = 0L
+                    val declaredLength = fileDescriptor.statSize
+                    tfliteModel = fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength)
+                    showToast("File uploaded successfully!")
+                } else {
+                    showToast("Error opening the file")
+                }
+            } else {
+                showToast("File selection canceled")
+            }
+        }
+    }
+    @SuppressLint("Range")
+    private fun getFileName(uri: Uri): String? {
+        var fileName: String? = null
+        val cursor = contentResolver.query(uri, null, null, null, null)
+        cursor?.use {
+            if (it.moveToFirst()) {
+                val displayName =
+                    it.getString(it.getColumnIndex(OpenableColumns.DISPLAY_NAME))
+                fileName = displayName
+            }
+        }
+        fileName = fileName?.substringAfterLast(".", "")
+        return fileName
+    }
     private fun getFilenameWithoutExtensionFromUri(uri: Uri): String? {
         var filenameWithoutExtension: String? = null
         val contentResolver: ContentResolver = applicationContext.contentResolver
@@ -120,53 +132,8 @@ class MenuActivity : ComponentActivity() {
         }
         return filenameWithoutExtension
     }
-    @SuppressLint("Range")
-    private fun getFileName(uri: Uri): String? {
-        var fileName: String? = null
-        val cursor = contentResolver.query(uri, null, null, null, null)
-        cursor?.use {
-            if (it.moveToFirst()) {
-                val displayName =
-                    it.getString(it.getColumnIndex(OpenableColumns.DISPLAY_NAME))
-                fileName = displayName
-            }
-        }
-        fileName = fileName?.substringAfterLast(".", "")
-        return fileName
-    }
     private fun showToast(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
-
-
-//    @SuppressLint("Recycle")
-//    @Deprecated("Deprecated in Java")
-//    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-//        super.onActivityResult(requestCode, resultCode, data)
-//        if (resultCode ==Activity.RESULT_OK && requestCode==0) {
-//            val selectedFileUri: Uri? = data?.data
-//            if (selectedFileUri != null) {
-//                fileExtension = getFileName(selectedFileUri)!!
-//                getFilenameWithoutExtensionFromUri(selectedFileUri)?.let {
-//                    Yolov5Model.setFolderMain(
-//                        it
-//                    )
-//                }
-//                val fileDescriptor = contentResolver.openFileDescriptor(selectedFileUri, "r")
-//                if (fileDescriptor != null) {
-//                    val fileInputStream = FileInputStream(fileDescriptor.fileDescriptor)
-//                    val fileChannel = fileInputStream.channel
-//                    val startOffset = 0L
-//                    val declaredLength = fileDescriptor.statSize
-//                    tfliteModel = fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength)
-//                    showToast("File uploaded successfully!")
-//                } else {
-//                    showToast("Error opening the file")
-//                }
-//            } else {
-//                showToast("File selection canceled")
-//            }
-//        }
-//    }
 }

@@ -25,6 +25,20 @@
             android:id="@+id/imageView"/>
 
 
+<!--    <TextView-->
+<!--        android:layout_width="wrap_content"-->
+<!--        android:layout_height="wrap_content"-->
+<!--        android:text="00:00"-->
+<!--        app:layout_constraintBottom_toBottomOf="@+id/imageView"-->
+<!--        app:layout_constraintEnd_toEndOf="parent"-->
+<!--        app:layout_constraintHorizontal_bias="0.911"-->
+<!--        app:layout_constraintStart_toStartOf="parent"-->
+<!--        app:layout_constraintTop_toTopOf="parent"-->
+<!--        app:layout_constraintVertical_bias="0.05"-->
+<!--        android:padding="2pt"-->
+<!--        android:textSize="8pt"-->
+<!--        android:background="#963c2cb8"/>-->
+
     <Button
         android:id="@+id/capture_button"
         android:layout_width="wrap_content"

@@ -17,79 +17,10 @@ import java.nio.ByteBuffer
 
 class ImageProcessor {
     companion object {
-
-        fun scaleAndHisteq(bitmap: Bitmap, width: Int, height: Int): Bitmap {
-            return resizeImageWithPadding(histogramEqualization(bitmap),width,height)
+        fun resizeOnly(bitmap: Bitmap, width: Int, height: Int): Bitmap {
+            return paddingImage(resizeImage(bitmap,width,height),width,height)
         }
-
-        fun scaleAndGrayScale(bitmap: Bitmap, width: Int, height: Int): Bitmap {
-            return resizeImageWithPadding(convertToGrayscale(bitmap),width,height)
-        }
-
-        fun scaleOnly(bitmap: Bitmap, width: Int, height: Int): Bitmap {
-            return resizeImageWithPadding(bitmap,width,height)
-        }
-
-        fun scaleStretch(bitmap: Bitmap, width: Int, height: Int): Bitmap {
-            return Bitmap.createScaledBitmap(bitmap,width,height,false)
-        }
-
-        fun convertToGrayscale(bitmap: Bitmap): Bitmap {
-            // Create a mutable bitmap with the same width and height as the original bitmap
-            val grayscaleBitmap = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
-
-            // Create a color matrix for grayscale conversion
-            val colorMatrix = ColorMatrix()
-            colorMatrix.setSaturation(0f)
-
-            // Create a paint object with the color matrix
-            val paint = Paint()
-            paint.colorFilter = ColorMatrixColorFilter(colorMatrix)
-
-            // Create a canvas with the grayscale bitmap
-            val canvas = android.graphics.Canvas(grayscaleBitmap)
-
-            // Draw the original bitmap on the canvas with the paint
-            canvas.drawBitmap(bitmap, 0f, 0f, paint)
-
-            return grayscaleBitmap
-        }
-
-        fun histogramEqualization(bitmap: Bitmap): Bitmap {
-            // Calculate the histogram of the grayscale image
-            val histogram = IntArray(256)
-            val equalizedHistogram = IntArray(256)
-            val pixels = IntArray(bitmap.width * bitmap.height)
-            bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-
-            for (pixel in pixels) {
-                val grayscale = Color.red(pixel)
-                histogram[grayscale]++
-            }
-
-            val totalPixels = bitmap.width * bitmap.height
-            var sum = 0
-            for (i in 0 until 256) {
-                sum += histogram[i]
-                equalizedHistogram[i] = (sum.toFloat() / totalPixels * 255).toInt()
-            }
-
-            // Create a new bitmap for the equalized image
-            val equalizedBitmap = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
-
-            // Apply the equalization to each pixel in the grayscale image
-            for (i in 0 until pixels.size) {
-                val grayscale = Color.red(pixels[i])
-                val equalizedValue = equalizedHistogram[grayscale]
-                pixels[i] = Color.rgb(equalizedValue, equalizedValue, equalizedValue)
-            }
-
-            equalizedBitmap.setPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-
-            return equalizedBitmap
-        }
-
-        fun resizeImageWithPadding(bitmap: Bitmap, targetWidth: Int, targetHeight: Int): Bitmap {
+        fun resizeImage(bitmap: Bitmap, targetWidth: Int, targetHeight: Int):Bitmap {
             val originalWidth = bitmap.width
             val originalHeight = bitmap.height
 
@@ -101,28 +32,57 @@ class ImageProcessor {
             val newWidth = (originalWidth / scaleFactor).toInt()
             val newHeight = (originalHeight / scaleFactor).toInt()
 
-            val leftPadding = (targetWidth - newWidth) / 2
-            val topPadding = (targetHeight - newHeight) / 2
-
-            val resizedBitmap = Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
-
+            return Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
+        }
+        fun paddingImage(bitmap: Bitmap, targetWidth: Int, targetHeight: Int) :Bitmap {
+            val leftPadding = (targetWidth - bitmap.width) / 2
+            val topPadding = (targetHeight - bitmap.height) / 2
             val outputBitmap = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(outputBitmap)
-
-            // Fill the entire output bitmap with the padding color
             canvas.drawColor(Color.rgb(114,114,114))
-
-//            val paint = Paint()
-//            paint.isAntiAlias = true
-//            paint.isFilterBitmap = true
-//            paint.isDither = true
-
-            canvas.drawBitmap(resizedBitmap, leftPadding.toFloat(), topPadding.toFloat(), null)
-
+            canvas.drawBitmap(bitmap, leftPadding.toFloat(), topPadding.toFloat(), null)
             return outputBitmap
         }
-
-
+        fun resizeAndGrayScale(bitmap: Bitmap, width: Int, height: Int): Bitmap {
+            return paddingImage(convertToGrayscale(resizeImage(bitmap,width,height)), width, height)
+        }
+        fun convertToGrayscale(bitmap: Bitmap): Bitmap {
+            val grayscaleBitmap = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
+            val colorMatrix = ColorMatrix()
+            colorMatrix.setSaturation(0f)
+            val paint = Paint()
+            paint.colorFilter = ColorMatrixColorFilter(colorMatrix)
+            val canvas = Canvas(grayscaleBitmap)
+            canvas.drawBitmap(bitmap, 0f, 0f, paint)
+            return grayscaleBitmap
+        }
+        fun resizeAndHisteq(bitmap: Bitmap, width: Int, height: Int): Bitmap {
+            return paddingImage(histogramEqualization(resizeImage(bitmap,width,height)), width, height)
+        }
+        fun histogramEqualization(bitmap: Bitmap): Bitmap {
+            val histogram = IntArray(256)
+            val equalizedHistogram = IntArray(256)
+            val pixels = IntArray(bitmap.width * bitmap.height)
+            bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+            for (pixel in pixels) {
+                val grayscale = Color.red(pixel)
+                histogram[grayscale]++
+            }
+            val totalPixels = bitmap.width * bitmap.height
+            var sum = 0
+            for (i in 0 until 256) {
+                sum += histogram[i]
+                equalizedHistogram[i] = (sum.toFloat() / totalPixels * 255).toInt()
+            }
+            val equalizedBitmap = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
+            for (i in 0 until pixels.size) {
+                val grayscale = Color.red(pixels[i])
+                val equalizedValue = equalizedHistogram[grayscale]
+                pixels[i] = Color.rgb(equalizedValue, equalizedValue, equalizedValue)
+            }
+            equalizedBitmap.setPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+            return equalizedBitmap
+        }
         fun imageProxyToBitmap(imageProxy: ImageProxy, rotation: Int): Bitmap {
             val yBuffer = imageProxy.planes[0].buffer // Y
             val uBuffer = imageProxy.planes[1].buffer // U

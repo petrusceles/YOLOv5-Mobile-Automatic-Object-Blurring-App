@@ -15,8 +15,8 @@ class KalmanBoxTracker(
     boundingBox: FloatArray?
 ) {
     private val F: RealMatrix = Array2DRowRealMatrix(arrayOf(
-        doubleArrayOf(1.0, 0.0, 0.0, 0.0, 10000.0, 0.0, 0.0),
-        doubleArrayOf(0.0, 1.0, 0.0, 0.0, 0.0, 10000.0, 0.0),
+        doubleArrayOf(1.0, 0.0, 0.0, 0.0, 100.0, 0.0, 0.0),
+        doubleArrayOf(0.0, 1.0, 0.0, 0.0, 0.0, 100.0, 0.0),
         doubleArrayOf(0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0),
         doubleArrayOf(0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0),
         doubleArrayOf(0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0),
@@ -96,6 +96,8 @@ class KalmanBoxTracker(
         private var count = 0
     }
     var id: Int = 0
+    var isUpdate: Boolean = true
+    var isSettle: Boolean = false
 
     private var kalmanFilter: KalmanFilter
     init {
@@ -109,24 +111,30 @@ class KalmanBoxTracker(
 
     var timeSinceUpdate = 0.0f
     private var history = mutableListOf<FloatArray>()
-    private var hits :Int = 0
+    var hits :Int = 0
     var hitStreak: Int = 0
     var age :Int = 0
+
     fun predict(): FloatArray {
         if ((kalmanFilter.stateEstimation[6] + kalmanFilter.stateEstimation[2]) <= 0) {
             kalmanFilter.stateEstimation[6] *= 0.0
         }
         kalmanFilter.predict()
         this.age++
+//        if (this.hitStreak > 1) {
+//            isSettle = true
+//        }
         if (this.timeSinceUpdate > 0) {
             this.hitStreak = 0
         }
         this.timeSinceUpdate++
         this.history.add(convertBBox(kalmanFilter.stateEstimation))
+        this.isUpdate = false
         return this.history.last()
     }
     fun update(boundingBox: FloatArray) {
         val x_new = getBoxFeatures(boundingBox)
+        this.isUpdate = true
         this.timeSinceUpdate = 0.0f
         this.history.clear()
         this.hits++

@@ -56,7 +56,11 @@ class Yolov5Detector (tfliteModel: MappedByteBuffer, options: Interpreter.Option
         rewind()
     }
 
-    private lateinit var inputBufferProcessing: ByteBuffer
+    private var inputBufferTemp: ByteBuffer = ByteBuffer.allocateDirect(inputSize * inputType.byteSize() ).apply {
+        order(ByteOrder.nativeOrder())
+        rewind()
+    }
+
     private var outputBuffer: ByteBuffer = ByteBuffer.allocateDirect(outputShape[1]*6).apply {
         order(ByteOrder.nativeOrder())
         rewind()
@@ -67,14 +71,8 @@ class Yolov5Detector (tfliteModel: MappedByteBuffer, options: Interpreter.Option
     private lateinit var currentBitmap: Bitmap
     private lateinit var mutableBitmap: Bitmap
 
-
-
-
     private var py:Python
     private var sortTracker:Sort
-
-    private var startDrawing: Boolean = false
-
     init {
         if (!Python.isStarted()) {
             Python.start(AndroidPlatform(contextParent))
@@ -88,11 +86,11 @@ class Yolov5Detector (tfliteModel: MappedByteBuffer, options: Interpreter.Option
     }
 
     fun getCurrentBitmap():Bitmap {
-        return currentBitmap!!
+        return currentBitmap
     }
 
     fun setCurrentBitmap(_currentBitmap:Bitmap) {
-        currentBitmap = _currentBitmap
+        this.currentBitmap = _currentBitmap.copy(_currentBitmap.config, true)
     }
 
     fun getFinalBoundingBoxes():MutableList<FloatArray> {
@@ -102,49 +100,42 @@ class Yolov5Detector (tfliteModel: MappedByteBuffer, options: Interpreter.Option
         return untrackedBoundingBoxes
     }
 
-    fun isInputBufferProcessingFilled(): Boolean {
-        return inputBufferProcessing.position() >= inputBufferProcessing.limit()
-    }
-
     fun isCurrentBitmapInitialized(): Boolean {
         return ::currentBitmap.isInitialized
     }
 
-
     fun createInputBuffer(scaledBitmap: Bitmap) {
         val pixels = IntArray(inputShape[1] * inputShape[2])
         scaledBitmap.getPixels(pixels, 0, inputShape[2], 0, 0, inputShape[2], inputShape[1])
-        inputBuffer.clear()
+        inputBufferTemp.clear()
         for (pixel in pixels) {
-            inputBuffer.put(
+            inputBufferTemp.put(
                 (((pixel shr 16 and 0xFF) - IMAGE_MEAN) / IMAGE_STD / inputScale + inputZeroPoint).toInt()
                     .toByte()
             )
-            inputBuffer.put(
+            inputBufferTemp.put(
                 (((pixel shr 8 and 0xFF) - IMAGE_MEAN) / IMAGE_STD / inputScale + inputZeroPoint).toInt()
                     .toByte()
             )
-            inputBuffer.put(
+            inputBufferTemp.put(
                 (((pixel and 0xFF) - IMAGE_MEAN) / IMAGE_STD / inputScale + inputZeroPoint).toInt()
                     .toByte()
             )
         }
-        inputBuffer.rewind()
-//        inputBufferProcessing = inputBuffer.duplicate()
+        inputBufferTemp.rewind()
+        inputBuffer.clear()
+        inputBuffer.put(inputBufferTemp)
+//        inputBuffer.rewind()
     }
 
     @RequiresApi(Build.VERSION_CODES.S)
-    fun inferenceAndPostProcess() {
-        val width = currentBitmap.width
-        val height = currentBitmap.height
+    fun inferenceAndPostProcess(bitmap: Bitmap) {
+        val veryCurrentBitmap = bitmap.copy(bitmap.config,true)
         val startTime = SystemClock.uptimeMillis()
-
-        val boundingBoxes = mutableListOf<FloatArray>()
-
+        val inputArray = arrayOf<Any>(inputBuffer)
         val outputMap: MutableMap<Int, Any> = HashMap()
         outputBuffer.clear()
         outputMap[0] = outputBuffer
-        val inputArray = arrayOf<Any>(inputBuffer)
 
         interpreter.runForMultipleInputsOutputs(inputArray, outputMap)
 
@@ -167,21 +158,20 @@ class Yolov5Detector (tfliteModel: MappedByteBuffer, options: Interpreter.Option
             }
         }
 
+        val width = bitmap.width
+        val height = bitmap.height
+
         val resizedWidth = inputShape[1]
         val resizedHeight = inputShape[1]
 
-
         val originalHeightInResized = min(height.toFloat() * (resizedWidth.toFloat()/width.toFloat()), resizedHeight.toFloat())
-
-
         val originalWidthInResized = min(width.toFloat() * (resizedHeight.toFloat()/height.toFloat()), resizedWidth.toFloat())
 
-        Log.d("RESIZED SIZE", "W ${originalWidthInResized}")
-
+        val boundingBoxes = mutableListOf<FloatArray>()
         for (i in 0 until outputShape[1]) {
             val objScore = out[i][4]
             if (objScore >= Yolov5Model.getConfThreshold()) {
-                if (out[i][2] > 0.9f && out[i][3] > 0.9f) {
+                if (out[i][2] > 0.9f || out[i][3] > 0.9f) {
                     continue
                 }
                 val xPos = ((2*resizedWidth*out[i][0] - resizedWidth + originalWidthInResized)*width)/(2*originalWidthInResized)
@@ -201,11 +191,6 @@ class Yolov5Detector (tfliteModel: MappedByteBuffer, options: Interpreter.Option
             }
         }
 
-        for (box in boundingBoxes) {
-            Log.d("BOXES", box.contentToString())
-        }
-
-
         untrackedBoundingBoxes = nonMaxSuppression(boundingBoxes)
 
         finalBoundingBoxes = if (Yolov5Model.getIsTracking()) {
@@ -213,24 +198,18 @@ class Yolov5Detector (tfliteModel: MappedByteBuffer, options: Interpreter.Option
         } else {
             untrackedBoundingBoxes
         }
-        currentBitmap.let { drawRectangleAndShow(it) }
+        blurTheBitmap(veryCurrentBitmap)
 
-//        inputBufferProcessing.clear()
         val timeSpent = (SystemClock.uptimeMillis() - startTime).toInt()
         Log.d("INFERENCE TIME", "$timeSpent ms")
     }
 
     @RequiresApi(Build.VERSION_CODES.S)
-    private fun drawRectangleAndShow(bitmap: Bitmap) {
+    private fun blurTheBitmap(bitmap: Bitmap) {
         var mutableBitmapTemp = bitmap.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(mutableBitmapTemp)
         val blurPaint = Paint().apply {
             maskFilter = BlurMaskFilter(7f, BlurMaskFilter.Blur.NORMAL)
-        }
-        val rectPaint = Paint().apply {
-            color = Color.GREEN
-            strokeWidth = 2.0f
-            style = Paint.Style.STROKE
         }
         for (box in finalBoundingBoxes) {
             Log.d("BOX", box.contentToString())
@@ -258,7 +237,8 @@ class Yolov5Detector (tfliteModel: MappedByteBuffer, options: Interpreter.Option
             rs.destroy()
             canvas.drawBitmap(blurredRegion,left.toFloat(), top.toFloat(), blurPaint)
         }
-        mutableBitmap = mutableBitmapTemp
+        currentBitmap = bitmap.copy(bitmap.config,true)
+        mutableBitmap = mutableBitmapTemp.copy(mutableBitmapTemp.config,true)
     }
 
     private fun nonMaxSuppression(

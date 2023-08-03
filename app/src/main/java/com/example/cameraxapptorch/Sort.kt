@@ -7,11 +7,10 @@ import com.chaquo.python.android.AndroidPlatform
 import kotlin.math.max
 import kotlin.math.min
 
-class Sort(module: PyObject) {
+class Sort(private val module: PyObject) {
 
     private var objectTrackers: MutableList<KalmanBoxTracker> = mutableListOf()
     private var frameCount: Int = 0
-    private val module = module
 
     fun updateSort(detections: List<FloatArray> = mutableListOf()): MutableList<FloatArray> {
         this.frameCount++
@@ -48,12 +47,75 @@ class Sort(module: PyObject) {
             if (tracker.timeSinceUpdate > Yolov5Model.getMaxTrackerAge()) {
                 this.objectTrackers.removeAt(i)
             } else {
-                if (tracker.hitStreak > 1 || frameCount <= 1 || tracker.age == 0) {
+                if (tracker.hits >= 1 || tracker.isUpdate) {
                     returnedBBox.add(bbox.plus((tracker.id + 1).toFloat()))
                 }
             }
         }
         return returnedBBox
+    }
+
+    private fun associateDetectionsToTrackers(
+        detections: List<FloatArray>,
+        trackers: List<FloatArray>,
+        iouThreshold: Float = 0.3f
+    ): Triple<MutableList<IntArray>, MutableList<Int>, MutableList<Int>> {
+        if (trackers.isEmpty()) {
+            val unmatchedDetections = MutableList(detections.size) { it }
+            return Triple(mutableListOf(), unmatchedDetections, mutableListOf())
+        }
+
+        val iouMatrix = computeIoUMatrix(detections, trackers)
+
+        val allEmpty = iouMatrix.any { it.isEmpty() }
+
+        var matchedIndices = mutableListOf<IntArray>()
+        if (iouMatrix.isNotEmpty() && !allEmpty) {
+            val numRows = iouMatrix.size
+            val numCols = iouMatrix[0].size
+            val thresholdMatrix = Array(numRows) { IntArray(numCols) }
+
+            for (i in 0 until numRows) {
+                for (j in 0 until numCols) {
+                    if (iouMatrix[i][j] > iouThreshold) {
+                        thresholdMatrix[i][j] = 1
+                    } else {
+                        thresholdMatrix[i][j] = 0
+                    }
+                }
+            }
+            val a = findMaxRowAndColSum(thresholdMatrix)
+            if (a.first == 1 && a.second == 1) {
+                matchedIndices = findOnes(thresholdMatrix)
+            } else {
+                val result = module.callAttr("lsa", iouMatrix).toString()
+                matchedIndices = convertStringToList(result)
+            }
+        }
+        val unmatchedDetections = mutableListOf<Int>()
+        detections.forEachIndexed { i, _ ->
+            val notExist = matchedIndices.none { it[1] == i }
+            if (notExist) {
+                unmatchedDetections.add(i)
+            }
+        }
+        val unmatchedTrackers = mutableListOf<Int>()
+        trackers.forEachIndexed { i, _ ->
+            val notExist = matchedIndices.none { it[0] == i }
+            if (notExist) {
+                unmatchedTrackers.add(i)
+            }
+        }
+        val matches = mutableListOf<IntArray>()
+        for (it in matchedIndices) {
+            if (iouMatrix[it[0]][it[1]] < iouThreshold) {
+                unmatchedDetections.add(it[1])
+                unmatchedTrackers.add(it[0])
+            } else {
+                matches.add(intArrayOf(it[0], it[1]))
+            }
+        }
+        return Triple(matches, unmatchedDetections, unmatchedTrackers)
     }
 
     private fun findMaxRowAndColSum(matrix: Array<IntArray>): Pair<Int, Int> {
@@ -100,82 +162,6 @@ class Sort(module: PyObject) {
         return locations
     }
 
-    private fun associateDetectionsToTrackers(
-        detections: List<FloatArray>,
-        trackers: List<FloatArray>,
-        iouThreshold: Float = 0.3f
-    ): Triple<MutableList<IntArray>, MutableList<Int>, MutableList<Int>> {
-        if (trackers.isEmpty()) {
-            val unmatchedDetections = MutableList(detections.size) { it }
-            return Triple(mutableListOf(), unmatchedDetections, mutableListOf())
-        }
-
-        val iouMatrix = computeIoUMatrix(detections, trackers)
-
-        val allEmpty = iouMatrix.any { it.isEmpty() }
-
-        var matchedIndices = mutableListOf<IntArray>()
-        if (iouMatrix.isNotEmpty() && !allEmpty) {
-            val numRows = iouMatrix.size
-            val numCols = iouMatrix[0].size
-            val thresholdMatrix = Array(numRows) { IntArray(numCols) }
-
-            for (i in 0 until numRows) {
-                for (j in 0 until numCols) {
-                    if (iouMatrix[i][j] > iouThreshold) {
-                        thresholdMatrix[i][j] = 1
-                    } else {
-                        thresholdMatrix[i][j] = 0
-                    }
-                }
-            }
-
-            val a = findMaxRowAndColSum(thresholdMatrix)
-
-            if (a.first == 1 && a.second == 1) {
-                matchedIndices = findOnes(thresholdMatrix)
-            } else {
-                val result = module.callAttr("lsa", iouMatrix).toString()
-                matchedIndices = convertStringToList(result)
-            }
-        }
-
-        val unmatchedDetections = mutableListOf<Int>()
-
-        detections.forEachIndexed { i, _ ->
-            val notExist = matchedIndices.none { it[1] == i }
-            if (notExist) {
-                unmatchedDetections.add(i)
-            }
-        }
-
-        val unmatchedTrackers = mutableListOf<Int>()
-
-        trackers.forEachIndexed { i, _ ->
-            val notExist = matchedIndices.none { it[0] == i }
-            if (notExist) {
-                unmatchedTrackers.add(i)
-            }
-        }
-//        for (match in matchedIndices) {
-//            Log.d("MATCH", match.contentToString())
-//        }
-
-        val matches = mutableListOf<IntArray>()
-
-        for (it in matchedIndices) {
-            if (iouMatrix[it[0]][it[1]] < iouThreshold) {
-                unmatchedDetections.add(it[1])
-                unmatchedTrackers.add(it[0])
-            } else {
-                matches.add(intArrayOf(it[0], it[1]))
-            }
-        }
-
-        return Triple(matches, unmatchedDetections, unmatchedTrackers)
-
-    }
-
     private fun computeIoUMatrix(detections: List<FloatArray>, trackers: List<FloatArray>): Array<FloatArray> {
         val numDetections = detections.size
         val numTrackers = trackers.size
@@ -190,7 +176,6 @@ class Sort(module: PyObject) {
                 val detection = detections[j]
                 val detectionArea = (detection[2] - detection[0]) * (detection[3] - detection[1])
 
-                // Compute the intersection rectangle
                 val xA = max(tracker[0], detection[0])
                 val yA = max(tracker[1], detection[1])
                 val xB = min(tracker[2], detection[2])
