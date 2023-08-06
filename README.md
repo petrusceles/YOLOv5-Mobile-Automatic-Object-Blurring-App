@@ -8,9 +8,9 @@
 
 ## IMPORTANT NOTES!!
 
-- I've tried **yolov5n6 512x512 int8 tflite model** on Redmi Note 10s. If I change the input size to **448x448**, it works. I do not know why.
-- This app will save the recording or frame and object detection data acquisition result in the application root folder, located in /Android
-- The save folder name is based on the model name. You can add prefixes from the configuration page
+- I've tried **yolov5n6 512x512 int8 tflite model** on Redmi Note 10s but it doesn't work. If I change the input size to **448x448**, it works. I do not know why.
+- This app will save the video recording resul and object detection data acquisition result in the application root folder, located in /Android
+- The saving folder name is based on the model name. You can add prefixes from the configuration page
 - While recording, you should not rotate the smartphone if the orientation is not locked
 - I will fix the bugs if I have time, thank you
 
