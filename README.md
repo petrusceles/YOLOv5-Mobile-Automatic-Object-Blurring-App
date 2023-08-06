@@ -1,5 +1,5 @@
 # SINGLE OBJECT AUTOMATIC BLURRING USING INT8 QUANTIZED TFLITE OBJECT DETECTION MODEL
-**Here is my final undergraduate project to create a computer vision real-time application**
+**Here is my final undergraduate project, building a computer vision real-time application**
 
 - Using image analysis use case from CameraX API to get the frame data
 - Parallel processing so that it can run with more than 20 fps for **yolov5n6 512x512 int8 tflite model** on POCO F3 [Snapdragon 870] but with some delay
