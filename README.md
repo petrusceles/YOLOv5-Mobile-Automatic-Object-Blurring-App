@@ -9,15 +9,14 @@
 ## IMPORTANT NOTES!!
 
 - I've tried **yolov5n6 512x512 int8 tflite model** on Redmi Note 10s but it doesn't work. If I change the input size to **448x448**, it works. I do not know why.
-- This app will save the video recording resul and object detection data acquisition result in the application root folder, located in /Android
+- This app will save the video recording result and object detection data acquisition result in the application root folder, located in /Android
 - The saving folder name is based on the model name. You can add prefixes from the configuration page
 - While recording, you should not rotate the smartphone if the orientation is not locked
 - I will fix the bugs if I have time, thank you
 
 ## RELATED FILES
-- License plate detection model (Yolov5n6 int8 512x512): https://drive.google.com/file/d/10tVmOHFGPF0fxkO29KDdzYErI0OLitTn/view?usp=sharing
-- Video result example: https://drive.google.com/file/d/1djGY97TuidRbModpCLGPP8ZZxxs9hdHB/view?usp=sharing
-
+- Here I placed the apk, video result, yolov5n6 model into this drive link : https://drive.google.com/drive/folders/17I3zGW_mmgXt9MSsw7EDWyzdXDGLnm_s?usp=drive_link
+  
 ## UI
 - Configuration Page
 
